@@ -3,11 +3,15 @@ using System.Text;
 
 namespace CsvReaderApp;
 
+public sealed record SortKey(string ColumnName, bool Ascending);
+
 public sealed class MainForm : Form
 {
-    private static readonly Color SelectedRowBackColor = Color.FromArgb(232, 240, 254);
-    private static readonly Color CurrentCellSelectionBackColor = Color.FromArgb(154, 192, 255);
-    private static readonly Color MatchHighlightBackColor = Color.FromArgb(255, 243, 176);
+    private static readonly Color SelectedRowBackColor = UiTheme.Selection;
+    private static readonly Color CurrentCellSelectionBackColor = UiTheme.ActiveCell;
+    private static readonly Color MatchHighlightBackColor = UiTheme.Match;
+    private const int SortGlyphReservedHeaderWidth = 30;
+    private const int MinimumSortableHeaderWidth = 56;
 
     private readonly Button openButton = new();
     private readonly Button saveButton = new();
@@ -15,16 +19,15 @@ public sealed class MainForm : Form
     private readonly DataGridView grid = new();
     private readonly StatusStrip statusStrip = new();
     private readonly ToolStripStatusLabel statusLabel = new();
+    private readonly ToolTip toolTip = new();
     private readonly ContextMenuStrip gridMenu = new();
     private readonly ToolStripMenuItem copyCellItem = new("Copy Cell");
     private readonly ToolStripMenuItem copyHeaderItem = new("Copy Header");
 
-    private readonly Label searchLabel = new();
-    private readonly TextBox searchBox = new();
-    private readonly Button prevMatchButton = new();
-    private readonly Button nextMatchButton = new();
-    private readonly Label matchCountLabel = new();
-    private readonly System.Windows.Forms.Timer searchDebounceTimer = new();
+    private readonly Button searchButton = new();
+    private SearchDialog? searchDialog;
+    private string lastSearchQuery = string.Empty;
+    private bool lastSearchWholeCell;
 
     private string? currentFilePath;
     private bool isLoading;
@@ -35,6 +38,9 @@ public sealed class MainForm : Form
     private List<(int RowIndex, int ColumnIndex)> currentMatches = new();
     private int currentMatchIndex = -1;
 
+    private readonly Button multiSortButton = new();
+    private readonly List<SortKey> sortKeys = new();
+
     public MainForm(string? initialPath)
     {
         Text = "CSVHelper";
@@ -43,6 +49,7 @@ public sealed class MainForm : Form
         Width = 1200;
         Height = 760;
         KeyPreview = true;
+        UiTheme.ApplyForm(this);
 
         BuildUi();
         FormClosing += MainFormOnFormClosing;
@@ -60,11 +67,11 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 4
+            RowCount = 3,
+            BackColor = UiTheme.PageBackground
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
@@ -72,74 +79,45 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Height = 44,
-            Padding = new Padding(8, 8, 8, 4)
+            Padding = new Padding(8, 8, 8, 4),
+            BackColor = UiTheme.PageBackground
         };
 
-        openButton.Text = "Open CSV";
-        openButton.SetBounds(8, 7, 100, 28);
+        openButton.SetBounds(8, 6, 34, 30);
+        UiTheme.ApplyIconButton(openButton, toolTip, UiIconKind.Open, "Open CSV");
         openButton.Click += (_, _) => OpenCsvFromDialog();
 
-        saveButton.Text = "Save";
-        saveButton.SetBounds(116, 7, 76, 28);
+        saveButton.SetBounds(48, 6, 34, 30);
+        UiTheme.ApplyIconButton(saveButton, toolTip, UiIconKind.Save, "Save");
         saveButton.Enabled = false;
         saveButton.Click += (_, _) => SaveCurrentFile(showSavedStatus: true);
 
+        multiSortButton.SetBounds(88, 6, 34, 30);
+        UiTheme.ApplyIconButton(multiSortButton, toolTip, UiIconKind.Sort, "Multi-sort");
+        multiSortButton.Enabled = false;
+        multiSortButton.Click += (_, _) => OpenMultiSortDialog();
+
+        searchButton.SetBounds(128, 6, 34, 30);
+        UiTheme.ApplyIconButton(searchButton, toolTip, UiIconKind.Search, "Search (Ctrl+F)");
+        searchButton.Enabled = false;
+        searchButton.Click += (_, _) => OpenSearchDialog();
+
         fileLabel.Text = "No file loaded";
         fileLabel.AutoEllipsis = true;
-        fileLabel.SetBounds(204, 13, 900, 20);
+        fileLabel.ForeColor = UiTheme.MutedText;
+        fileLabel.SetBounds(168, 12, 932, 20);
         fileLabel.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
 
         topPanel.Controls.Add(openButton);
         topPanel.Controls.Add(saveButton);
+        topPanel.Controls.Add(multiSortButton);
+        topPanel.Controls.Add(searchButton);
         topPanel.Controls.Add(fileLabel);
 
-        var searchPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Height = 36,
-            Padding = new Padding(8, 2, 8, 4)
-        };
-
-        searchLabel.Text = "Search:";
-        searchLabel.AutoSize = false;
-        searchLabel.SetBounds(8, 10, 50, 20);
-        searchLabel.TextAlign = ContentAlignment.MiddleLeft;
-
-        searchBox.SetBounds(60, 6, 240, 24);
-        searchBox.BorderStyle = BorderStyle.FixedSingle;
-        searchBox.TextChanged += (_, _) => ResetSearchDebounce();
-        searchBox.KeyDown += SearchBoxOnKeyDown;
-
-        prevMatchButton.Text = "↑";
-        prevMatchButton.SetBounds(306, 6, 32, 24);
-        prevMatchButton.Enabled = false;
-        prevMatchButton.Click += (_, _) => NavigateMatch(-1);
-
-        nextMatchButton.Text = "↓";
-        nextMatchButton.SetBounds(342, 6, 32, 24);
-        nextMatchButton.Enabled = false;
-        nextMatchButton.Click += (_, _) => NavigateMatch(1);
-
-        matchCountLabel.SetBounds(380, 10, 90, 20);
-        matchCountLabel.Text = string.Empty;
-        matchCountLabel.ForeColor = Color.Gray;
-        matchCountLabel.TextAlign = ContentAlignment.MiddleLeft;
-
-        searchPanel.Controls.Add(searchLabel);
-        searchPanel.Controls.Add(searchBox);
-        searchPanel.Controls.Add(prevMatchButton);
-        searchPanel.Controls.Add(nextMatchButton);
-        searchPanel.Controls.Add(matchCountLabel);
-
-        searchDebounceTimer.Interval = 200;
-        searchDebounceTimer.Tick += (_, _) =>
-        {
-            searchDebounceTimer.Stop();
-            ApplySearch(searchBox.Text);
-        };
-
         statusStrip.Dock = DockStyle.Fill;
+        statusStrip.BackColor = UiTheme.Surface;
         statusStrip.Items.Add(statusLabel);
+        statusLabel.ForeColor = UiTheme.MutedText;
         statusLabel.Text = "Ready";
 
         grid.Dock = DockStyle.Fill;
@@ -147,20 +125,30 @@ public sealed class MainForm : Form
         grid.AllowUserToDeleteRows = false;
         grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells;
         grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
-        grid.BackgroundColor = Color.White;
-        grid.BorderStyle = BorderStyle.Fixed3D;
+        grid.BackgroundColor = UiTheme.Surface;
+        grid.BorderStyle = BorderStyle.None;
         grid.ColumnHeadersHeight = 28;
+        grid.EnableHeadersVisualStyles = false;
+        grid.GridColor = UiTheme.Border;
         grid.RowTemplate.Height = 24;
         grid.RowHeadersVisible = false;
         grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
         grid.MultiSelect = false;
         grid.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
+        grid.ColumnHeadersDefaultCellStyle.BackColor = UiTheme.Surface;
+        grid.ColumnHeadersDefaultCellStyle.ForeColor = UiTheme.Text;
+        grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiTheme.Surface;
+        grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiTheme.Text;
+        grid.DefaultCellStyle.BackColor = UiTheme.Surface;
+        grid.DefaultCellStyle.ForeColor = UiTheme.Text;
         grid.DefaultCellStyle.SelectionBackColor = CurrentCellSelectionBackColor;
-        grid.DefaultCellStyle.SelectionForeColor = Color.Black;
+        grid.DefaultCellStyle.SelectionForeColor = UiTheme.Text;
+        grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 252, 251);
         grid.MouseDown += GridOnMouseDown;
         grid.CellMouseDown += GridOnCellMouseDown;
         grid.SelectionChanged += UpdateGridSelectionHighlight;
-        grid.Sorted += (_, _) => ApplySearch(searchBox.Text);
+        grid.DataBindingComplete += GridOnDataBindingComplete;
+        grid.ColumnHeaderMouseClick += GridOnColumnHeaderMouseClick;
         grid.CellValueChanged += (_, _) =>
         {
             MarkDirty();
@@ -179,9 +167,8 @@ public sealed class MainForm : Form
         grid.ContextMenuStrip = gridMenu;
 
         layout.Controls.Add(topPanel, 0, 0);
-        layout.Controls.Add(searchPanel, 0, 1);
-        layout.Controls.Add(grid, 0, 2);
-        layout.Controls.Add(statusStrip, 0, 3);
+        layout.Controls.Add(grid, 0, 1);
+        layout.Controls.Add(statusStrip, 0, 2);
         Controls.Add(layout);
 
         RegisterClearSelectionOnMouseDown(layout);
@@ -246,6 +233,115 @@ public sealed class MainForm : Form
         }
     }
 
+    private void GridOnDataBindingComplete(object? sender, DataGridViewBindingCompleteEventArgs e)
+    {
+        // 绑定真正完成的时机：DataGridView 绑定后会默认选中首个单元格并触发行高亮，
+        // 而 LoadCsvFile 里紧接着的清除（CommitGridInputAndClearSelection）会因行尚未生成而无效，
+        // 导致"打开文件后整片高亮"。在此处彻底重置选中与所有行高亮。
+        grid.ClearSelection();
+        grid.CurrentCell = null;
+        foreach (DataGridViewRow row in grid.Rows)
+        {
+            row.DefaultCellStyle.BackColor = Color.Empty;
+        }
+
+        // 列改用手动排序模式：默认 Automatic 会触发内置单列排序且不显示我们的 glyph，
+        // 改为 Programmatic 后由 ColumnHeaderMouseClick + ApplySort 全权管理排序与箭头。
+        foreach (DataGridViewColumn column in grid.Columns)
+        {
+            column.SortMode = DataGridViewColumnSortMode.Programmatic;
+            EnsureSortableHeaderWidth(column);
+        }
+
+        highlightedRowIndex = -1;
+    }
+
+    private void GridOnColumnHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
+    {
+        // 表头单击 = 单列排序（替换多列排序）。
+        // 同一列重复点击在 升序 → 降序 → 取消 间轮转；取消后若链空则恢复文件原始顺序。
+        if (grid.DataSource is not DataTable table
+            || e.ColumnIndex < 0
+            || e.ColumnIndex >= table.Columns.Count)
+        {
+            return;
+        }
+
+        var columnName = table.Columns[e.ColumnIndex].ColumnName;
+
+        if (sortKeys.Count > 0 && sortKeys[0].ColumnName == columnName)
+        {
+            if (sortKeys[0].Ascending)
+            {
+                sortKeys[0] = sortKeys[0] with { Ascending = false };
+            }
+            else
+            {
+                sortKeys.RemoveAt(0);
+            }
+        }
+        else
+        {
+            sortKeys.Clear();
+            sortKeys.Add(new SortKey(columnName, Ascending: true));
+        }
+
+        ApplySort();
+    }
+
+    private void ApplySort()
+    {
+        if (grid.DataSource is not DataTable table)
+        {
+            return;
+        }
+
+        // DataView.Sort 仅重排视图，不改 DataTable.Rows 的实际顺序，因此保存仍是文件原始顺序。
+        // 列名含空格（如 "Column 1"）需用 [] 转义，否则 DataView 解析失败。
+        var expression = string.Join(", ",
+            sortKeys.Select(k => $"[{k.ColumnName}] {(k.Ascending ? "ASC" : "DESC")}"));
+        table.DefaultView.Sort = expression;
+
+        // 逐列显式设置 glyph（含 type 列），根治「点击列头不显示上下箭头」。
+        for (var i = 0; i < grid.Columns.Count && i < table.Columns.Count; i++)
+        {
+            var columnName = table.Columns[i].ColumnName;
+            var match = sortKeys.FirstOrDefault(k => k.ColumnName == columnName);
+            grid.Columns[i].HeaderCell.SortGlyphDirection =
+                match is null ? SortOrder.None
+                : match.Ascending ? SortOrder.Ascending
+                : SortOrder.Descending;
+        }
+
+        RefreshSearchIfActive();
+    }
+
+    private void EnsureSortableHeaderWidth(DataGridViewColumn column)
+    {
+        var headerFont = grid.ColumnHeadersDefaultCellStyle.Font ?? grid.Font;
+        var headerText = string.IsNullOrEmpty(column.HeaderText) ? " " : column.HeaderText;
+        var textWidth = TextRenderer.MeasureText(headerText, headerFont).Width;
+        var requiredWidth = Math.Max(MinimumSortableHeaderWidth, textWidth + SortGlyphReservedHeaderWidth);
+        column.MinimumWidth = Math.Max(column.MinimumWidth, requiredWidth);
+    }
+
+    private void OpenMultiSortDialog()
+    {
+        if (grid.DataSource is not DataTable table)
+        {
+            return;
+        }
+
+        var columns = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+        using var dialog = new MultiSortDialog(columns, sortKeys);
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            sortKeys.Clear();
+            sortKeys.AddRange(dialog.Result);
+            ApplySort();
+        }
+    }
+
     private void OpenCsvFromDialog()
     {
         using var dialog = new OpenFileDialog
@@ -297,6 +393,9 @@ public sealed class MainForm : Form
             }
 
             grid.DataSource = table;
+            sortKeys.Clear();
+            multiSortButton.Enabled = true;
+            searchButton.Enabled = true;
             CommitGridInputAndClearSelection();
             currentFilePath = path;
             SetDirty(false);
@@ -304,6 +403,10 @@ public sealed class MainForm : Form
             Text = $"CSVHelper - {Path.GetFileName(path)}";
             SetStatus($"Loaded {table.Rows.Count} rows, {table.Columns.Count} columns");
             ResetSearch();
+            if (searchDialog is { IsDisposed: false } dialog)
+            {
+                dialog.ClearInput();
+            }
         }
         catch (Exception ex)
         {
@@ -423,8 +526,7 @@ public sealed class MainForm : Form
 
         if (e.Control && e.KeyCode == Keys.F)
         {
-            searchBox.Focus();
-            searchBox.SelectAll();
+            OpenSearchDialog();
             e.SuppressKeyPress = true;
         }
     }
@@ -456,27 +558,37 @@ public sealed class MainForm : Form
         }
     }
 
-    private void ResetSearchDebounce()
-    {
-        searchDebounceTimer.Stop();
-        searchDebounceTimer.Start();
-    }
-
-    private static List<(int RowIndex, int ColumnIndex)> SearchMatches(DataGridView gridView, string query)
+    private static List<(int RowIndex, int ColumnIndex)> SearchMatches(DataGridView gridView, string query, bool wholeCell)
     {
         var matches = new List<(int RowIndex, int ColumnIndex)>();
-        if (string.IsNullOrEmpty(query))
-        {
-            return matches;
-        }
+        var isEmptySearch = string.IsNullOrEmpty(query);
 
         for (var row = 0; row < gridView.Rows.Count; row++)
         {
             var gridViewRow = gridView.Rows[row];
             for (var col = 0; col < gridViewRow.Cells.Count; col++)
             {
-                if (gridViewRow.Cells[col].Value is string value &&
-                    value.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (gridViewRow.Cells[col].Value is not string value)
+                {
+                    continue;
+                }
+
+                bool hit;
+                if (isEmptySearch)
+                {
+                    // 空查询 = 搜索空单元格（CSV ",," 之间的空）。
+                    hit = value.Length == 0;
+                }
+                else if (wholeCell)
+                {
+                    hit = value.Equals(query, StringComparison.OrdinalIgnoreCase);
+                }
+                else
+                {
+                    hit = value.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+
+                if (hit)
                 {
                     matches.Add((row, col));
                 }
@@ -486,27 +598,23 @@ public sealed class MainForm : Form
         return matches;
     }
 
-    private void ApplySearch(string query)
+    private void ApplySearch(string query, bool wholeCell)
     {
         ClearHighlights();
-        currentMatches = SearchMatches(grid, query);
+        currentMatches = SearchMatches(grid, query, wholeCell);
 
         if (currentMatches.Count == 0)
         {
             currentMatchIndex = -1;
-            prevMatchButton.Enabled = false;
-            nextMatchButton.Enabled = false;
-            UpdateMatchCountLabel();
-            SetStatus(string.IsNullOrEmpty(query) ? "Ready" : "No matches");
+            UpdateSearchDialogCount();
+            SetStatus(string.IsNullOrEmpty(query) ? "No empty cells" : "No matches");
             return;
         }
 
         currentMatchIndex = 0;
         HighlightMatches();
         NavigateToCurrentMatch(scroll: true);
-        prevMatchButton.Enabled = true;
-        nextMatchButton.Enabled = true;
-        UpdateMatchCountLabel();
+        UpdateSearchDialogCount();
     }
 
     private void HighlightMatches()
@@ -540,7 +648,7 @@ public sealed class MainForm : Form
 
         currentMatchIndex = (currentMatchIndex + direction + currentMatches.Count) % currentMatches.Count;
         NavigateToCurrentMatch(scroll: true);
-        UpdateMatchCountLabel();
+        UpdateSearchDialogCount();
     }
 
     private void NavigateToCurrentMatch(bool scroll)
@@ -573,51 +681,74 @@ public sealed class MainForm : Form
         }
     }
 
-    private void UpdateMatchCountLabel()
+    private void UpdateSearchDialogCount()
     {
-        if (currentMatches.Count == 0)
-        {
-            matchCountLabel.Text = string.IsNullOrEmpty(searchBox.Text) ? string.Empty : "0 / 0";
-            return;
-        }
-
-        matchCountLabel.Text = $"{currentMatchIndex + 1} / {currentMatches.Count}";
-    }
-
-    private void SearchBoxOnKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.KeyCode == Keys.Enter)
-        {
-            NavigateMatch(e.Shift ? -1 : 1);
-            e.SuppressKeyPress = true;
-        }
-        else if (e.KeyCode == Keys.Escape)
-        {
-            searchBox.Text = string.Empty;
-            ApplySearch(string.Empty);
-            e.SuppressKeyPress = true;
-        }
+        searchDialog?.UpdateMatchCount(currentMatchIndex, currentMatches.Count);
     }
 
     private void RefreshSearchIfActive()
     {
-        if (isLoading || string.IsNullOrEmpty(searchBox.Text))
+        if (isLoading || searchDialog is null || searchDialog.IsDisposed || string.IsNullOrEmpty(searchDialog.Query))
         {
             return;
         }
 
-        ApplySearch(searchBox.Text);
+        ApplySearch(searchDialog.Query, searchDialog.WholeCell);
     }
 
     private void ResetSearch()
     {
-        searchDebounceTimer.Stop();
         ClearHighlights();
         currentMatches = new List<(int RowIndex, int ColumnIndex)>();
         currentMatchIndex = -1;
-        prevMatchButton.Enabled = false;
-        nextMatchButton.Enabled = false;
-        UpdateMatchCountLabel();
-        searchBox.Text = string.Empty;
+        UpdateSearchDialogCount();
+    }
+
+    private void OpenSearchDialog()
+    {
+        if (searchDialog is not null && !searchDialog.IsDisposed)
+        {
+            searchDialog.Activate();
+            searchDialog.FocusQuery();
+            return;
+        }
+
+        searchDialog = new SearchDialog(lastSearchQuery, lastSearchWholeCell);
+        searchDialog.SearchRequested += (_, _) =>
+        {
+            if (searchDialog is null || searchDialog.IsDisposed)
+            {
+                return;
+            }
+
+            ApplySearch(searchDialog.Query, searchDialog.WholeCell);
+        };
+        searchDialog.NavigateRequested += (_, direction) =>
+        {
+            if (searchDialog is null || searchDialog.IsDisposed)
+            {
+                return;
+            }
+
+            NavigateMatch(direction);
+        };
+        searchDialog.FormClosed += (_, _) =>
+        {
+            if (searchDialog is null || searchDialog.IsDisposed)
+            {
+                return;
+            }
+
+            lastSearchQuery = searchDialog.Query;
+            lastSearchWholeCell = searchDialog.WholeCell;
+            searchDialog = null;
+            ResetSearch();
+        };
+        searchDialog.Show(this);
+        // CenterParent 对非模态 Show 不可靠，手动将对话框居中于主窗体。
+        searchDialog.Location = new Point(
+            this.Left + (this.Width - searchDialog.Width) / 2,
+            this.Top + (this.Height - searchDialog.Height) / 2);
+        // 仅回填上一次查询，不自动搜索——等用户点「查找」。
     }
 }

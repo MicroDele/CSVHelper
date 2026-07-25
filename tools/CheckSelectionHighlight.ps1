@@ -25,8 +25,8 @@ try {
         throw "Expected CellSelect, got $($grid.SelectionMode)"
     }
 
-    $expectedRowColor = [System.Drawing.Color]::FromArgb(232, 240, 254)
-    $expectedCellColor = [System.Drawing.Color]::FromArgb(154, 192, 255)
+    $expectedRowColor = [System.Drawing.Color]::FromArgb(218, 245, 230)
+    $expectedCellColor = [System.Drawing.Color]::FromArgb(171, 231, 199)
 
     if ($grid.DefaultCellStyle.SelectionBackColor.ToArgb() -ne $expectedCellColor.ToArgb()) {
         throw "Unexpected active cell selection color: $($grid.DefaultCellStyle.SelectionBackColor)"

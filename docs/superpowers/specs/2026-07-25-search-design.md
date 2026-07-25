@@ -50,9 +50,9 @@
 - 无匹配 → `0 / 0`，状态栏提示 `No matches`。
 - 空表 → 不报错，正常返回空命中列表。
 
-## 双目录同步
+## 源码目录
 
-`CsvReaderApp/` 与 `csvReader/CsvReaderApp/` 两份保持同步修改（见 `AGENTS.md`），改完均执行 `dotnet build` 验证。
+当前源码以 `CsvReaderApp/` 为准，改完执行 `dotnet build` 验证。
 
 ## 测试
 

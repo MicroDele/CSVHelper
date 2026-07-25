@@ -2,14 +2,14 @@
 
 ## Project Structure & Module Organization
 
-This repository contains a small .NET Windows Forms CSV viewer/editor. The primary source tree is `CsvReaderApp/`:
+This repository contains a small .NET Windows Forms CSV viewer/editor. The source tree is `CsvReaderApp/`:
 
 - `Program.cs` starts the WinForms app and supports `--inspect <csv> [output]` for lightweight parsing checks.
 - `MainForm.cs` owns the UI, file open/save flow, grid behavior, and context menu actions.
 - `CsvDocument.cs` contains CSV parse and serialization logic.
 - `Assets/` stores the application icon.
 
-There is also a mirrored copy under `csvReader/`. When changing application behavior, keep equivalent files in both trees synchronized unless the duplication has been intentionally removed. Build outputs are under `bin/`, `obj/`, and published `dist/`; do not edit generated files directly.
+Build outputs are under `bin/`, `obj/`, and published `dist/`; do not edit generated files directly.
 
 ## Build, Test, and Development Commands
 
@@ -29,7 +29,7 @@ Use C# with nullable reference types and implicit usings enabled. Keep four-spac
 
 ## Testing Guidelines
 
-No dedicated test project currently exists. For parser changes, add or use `--inspect` scenarios with representative CSV files, including quoted fields, embedded commas, CRLF line endings, and empty data. For UI changes, build both source trees and manually verify the affected workflow in the WinForms app.
+No dedicated test project currently exists. For parser changes, add or use `--inspect` scenarios with representative CSV files, including quoted fields, embedded commas, CRLF line endings, and empty data. For UI changes, build the app and manually verify the affected workflow in the WinForms app.
 
 ## Commit & Pull Request Guidelines
 
@@ -37,4 +37,4 @@ Git history is not available in this checkout, so use concise imperative commit 
 
 ## Agent-Specific Instructions
 
-Before editing, check whether the same file exists under both `CsvReaderApp/` and `csvReader/CsvReaderApp/`. Preserve user changes, avoid broad refactors, and prefer minimal patches plus explicit build verification.
+Preserve user changes, avoid broad refactors, and prefer minimal patches plus explicit build verification.
