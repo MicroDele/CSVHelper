@@ -18,7 +18,6 @@ public sealed class MultiSortDialog : Form
     private readonly Button downButton = new();
     private readonly Button clearButton = new();
     private readonly Button okButton = new();
-    private readonly Button cancelButton = new();
     private readonly ToolTip toolTip = new();
 
     public MultiSortDialog(IReadOnlyList<string> columns, IReadOnlyList<SortKey> current)
@@ -32,7 +31,18 @@ public sealed class MultiSortDialog : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ClientSize = new Size(640, 420);
+        KeyPreview = true;
         UiTheme.ApplyForm(this);
+
+        // Esc 关闭（=取消，不应用排序）；右上角 X 同效。
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Escape)
+            {
+                Close();
+                e.SuppressKeyPress = true;
+            }
+        };
 
         BuildUi();
         Populate();
@@ -74,6 +84,9 @@ public sealed class MultiSortDialog : Form
         leftList.BorderStyle = BorderStyle.FixedSingle;
         leftList.BackColor = UiTheme.Surface;
         leftList.ForeColor = UiTheme.Text;
+        // 自绘以统一选中色为微信主题（与右侧 DataGridView 一致）。
+        leftList.DrawMode = DrawMode.OwnerDrawFixed;
+        leftList.DrawItem += LeftListOnDrawItem;
 
         rightGrid.Dock = DockStyle.Fill;
         rightGrid.AllowUserToAddRows = false;
@@ -136,16 +149,11 @@ public sealed class MultiSortDialog : Form
             Populate();
         };
 
-        cancelButton.Size = new Size(40, 34);
-        UiTheme.ApplyIconButton(cancelButton, toolTip, UiIconKind.Cancel, "Cancel");
-        cancelButton.DialogResult = DialogResult.Cancel;
-
         okButton.Size = new Size(40, 34);
         UiTheme.ApplyIconButton(okButton, toolTip, UiIconKind.Ok, "Apply sort", primary: true);
         okButton.DialogResult = DialogResult.OK;
 
         AcceptButton = okButton;
-        CancelButton = cancelButton;
 
         var middleButtons = new FlowLayoutPanel
         {
@@ -166,7 +174,7 @@ public sealed class MultiSortDialog : Form
         };
         bottomBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
         bottomBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        bottomBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
+        bottomBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
 
         var confirmButtons = new FlowLayoutPanel
         {
@@ -175,7 +183,7 @@ public sealed class MultiSortDialog : Form
             WrapContents = false,
             BackColor = UiTheme.PageBackground
         };
-        confirmButtons.Controls.AddRange(new Control[] { cancelButton, okButton });
+        confirmButtons.Controls.Add(okButton);
 
         bottomBar.Controls.Add(clearButton, 0, 0);
         bottomBar.Controls.Add(confirmButtons, 2, 0);
@@ -211,6 +219,22 @@ public sealed class MultiSortDialog : Form
             }
         }
         leftList.EndUpdate();
+    }
+
+    private void LeftListOnDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0)
+        {
+            return;
+        }
+
+        var selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+        using var brush = new SolidBrush(selected ? UiTheme.Selection : UiTheme.Surface);
+        e.Graphics.FillRectangle(brush, e.Bounds);
+        var text = leftList.Items[e.Index]?.ToString() ?? string.Empty;
+        var textBounds = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
+        TextRenderer.DrawText(e.Graphics, text, leftList.Font, textBounds, UiTheme.Text,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
     }
 
     private void AddSelected()
