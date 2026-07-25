@@ -1,0 +1,34 @@
+# 统一所有文本文件使用 LF 换行（跨平台一致）
+* text=auto eol=lf
+
+# 源码 / 配置 / 文档：强制 LF
+*.cs            text eol=lf
+*.csproj        text eol=lf
+*.sln           text eol=lf
+*.props         text eol=lf
+*.targets       text eol=lf
+*.json          text eol=lf
+*.md            text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.svg           text eol=lf
+*.ps1           text eol=lf
+*.sh            text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Windows 批处理脚本：保持 CRLF（兼容性最佳）
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# 二进制文件：不做任何行尾转换
+*.ico           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.bmp           binary
+*.exe           binary
+*.dll           binary
+*.pdb           binary
+*.cache         binary
