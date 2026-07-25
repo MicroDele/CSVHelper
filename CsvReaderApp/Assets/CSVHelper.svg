@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="sheet" x1="52" y1="20" x2="204" y2="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8fffb"/>
+      <stop offset="1" stop-color="#dff7ec"/>
+    </linearGradient>
+    <linearGradient id="corner" x1="168" y1="28" x2="224" y2="86" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d8f2e4"/>
+      <stop offset="1" stop-color="#9fd8ba"/>
+    </linearGradient>
+    <linearGradient id="pencil" x1="146" y1="166" x2="224" y2="222" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffd05a"/>
+      <stop offset="1" stop-color="#f08a28"/>
+    </linearGradient>
+  </defs>
+  <rect x="34" y="18" width="188" height="220" rx="28" fill="#16865c"/>
+  <path d="M58 18h112l52 52v144c0 13.3-10.7 24-24 24H58c-13.3 0-24-10.7-24-24V42c0-13.3 10.7-24 24-24z" fill="url(#sheet)"/>
+  <path d="M170 18v39c0 7.2 5.8 13 13 13h39l-52-52z" fill="url(#corner)"/>
+  <path d="M68 88h120" stroke="#15835b" stroke-width="12" stroke-linecap="round"/>
+  <path d="M68 122h120M68 156h84" stroke="#67ad90" stroke-width="10" stroke-linecap="round"/>
+  <path d="M92 75v94M132 75v94M172 75v70" stroke="#b7dccb" stroke-width="8" stroke-linecap="round"/>
+  <path d="M152 190l49-49 31 31-49 49-39 8 8-39z" fill="url(#pencil)" stroke="#70481b" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M200 142l31 31" stroke="#fff0b0" stroke-width="8" stroke-linecap="round"/>
+  <path d="M144 229l12-35 23 23-35 12z" fill="#5b3b22"/>
+</svg>

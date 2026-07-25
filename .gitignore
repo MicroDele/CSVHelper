@@ -1,0 +1,24 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ist/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+*.vshost.exe*
+*.cache
+
+# JetBrains Rider
+.idea/
+
+# Logs / temp
+*.log
+*.tmp
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
