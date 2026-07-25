@@ -12,7 +12,6 @@ public sealed class MainForm : Form
     private static readonly Color MatchHighlightBackColor = UiTheme.Match;
     private const int SortGlyphReservedHeaderWidth = 30;
     private const int MinimumSortableHeaderWidth = 56;
-    private const int HeaderPadding = 15;
 
     private readonly Button openButton = new();
     private readonly Button saveButton = new();
@@ -125,7 +124,7 @@ public sealed class MainForm : Form
         grid.AllowUserToAddRows = false;
         grid.AllowUserToDeleteRows = false;
         // 关闭自动尺寸：AllCells 会在每次行变化时全表重算尺寸，导致逐行可见的填充/排序。
-        // 列宽改为固定起点（表头宽度 + 留白，见 EnsureSortableHeaderWidth）+ 用户可拖动；行高固定。
+        // 列宽改为固定起点（表头宽度 + 排序箭头，见 EnsureSortableHeaderWidth）+ 用户可拖动；行高固定。
         grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
         // 双缓冲：绘制一次性完成，不再逐行可见。
@@ -330,8 +329,8 @@ public sealed class MainForm : Form
         // MinimumWidth 保证拖动时不会窄到放不下表头 + 排序箭头。
         var minimum = Math.Max(MinimumSortableHeaderWidth, textWidth + SortGlyphReservedHeaderWidth);
         column.MinimumWidth = Math.Max(column.MinimumWidth, minimum);
-        // 初始列宽 = 表头 + 箭头 + 留白（AutoSize=None 下的固定起点，略宽松不拥挤）；用户可拖动调整。
-        column.Width = Math.Max(column.MinimumWidth, textWidth + SortGlyphReservedHeaderWidth + HeaderPadding);
+        // 初始列宽 = 表头 + 箭头（AutoSize=None 下的固定起点）；用户可拖动调整。
+        column.Width = Math.Max(column.MinimumWidth, textWidth + SortGlyphReservedHeaderWidth);
     }
 
     private void OpenMultiSortDialog()
