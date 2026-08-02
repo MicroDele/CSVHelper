@@ -4,6 +4,7 @@ internal enum UiIconKind
 {
     Open,
     Save,
+    Reload,
     Sort,
     Up,
     Down,
@@ -131,6 +132,11 @@ internal static class UiTheme
                 graphics.DrawLine(pen, 7, 3, 7, 8);
                 graphics.DrawLine(pen, 13, 3, 13, 8);
                 graphics.DrawLine(pen, 7, 14, 13, 14);
+                break;
+            case UiIconKind.Reload:
+                graphics.DrawArc(pen, 4, 4, 12, 12, 35, 280);
+                graphics.DrawLine(pen, 14, 4, 16, 8);
+                graphics.DrawLine(pen, 14, 4, 10, 4);
                 break;
             case UiIconKind.Sort:
                 DrawArrow(graphics, pen, 7, 16, 7, 4);

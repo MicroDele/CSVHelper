@@ -12,10 +12,14 @@ public sealed class MainForm : Form
     private static readonly Color MatchHighlightBackColor = UiTheme.Match;
     private const int SortGlyphReservedHeaderWidth = 30;
     private const int MinimumSortableHeaderWidth = 56;
+    private const int GridHorizontalPadding = 8;
 
     private readonly Button openButton = new();
     private readonly Button saveButton = new();
+    private readonly Button reloadButton = new();
     private readonly Label fileLabel = new();
+    private readonly Panel cellEditPanel = new();
+    private readonly TextBox cellEditBox = new();
     private readonly DataGridView grid = new();
     private readonly StatusStrip statusStrip = new();
     private readonly ToolStripStatusLabel statusLabel = new();
@@ -31,6 +35,7 @@ public sealed class MainForm : Form
 
     private string? currentFilePath;
     private bool isLoading;
+    private bool isUpdatingCellEditBox;
     private bool isDirty;
     private int contextColumnIndex = -1;
     private int contextRowIndex = -1;
@@ -71,14 +76,15 @@ public sealed class MainForm : Form
             BackColor = UiTheme.PageBackground
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 84));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var topPanel = new Panel
         {
             Dock = DockStyle.Fill,
-            Height = 44,
+            Height = 84,
+            Margin = Padding.Empty,
             Padding = new Padding(8, 8, 8, 4),
             BackColor = UiTheme.PageBackground
         };
@@ -92,12 +98,17 @@ public sealed class MainForm : Form
         saveButton.Enabled = false;
         saveButton.Click += (_, _) => SaveCurrentFile(showSavedStatus: true);
 
-        multiSortButton.SetBounds(88, 6, 34, 30);
+        reloadButton.SetBounds(88, 6, 34, 30);
+        UiTheme.ApplyIconButton(reloadButton, toolTip, UiIconKind.Reload, "Reload from disk (Ctrl+R)");
+        reloadButton.Enabled = false;
+        reloadButton.Click += (_, _) => ReloadCurrentFile();
+
+        multiSortButton.SetBounds(128, 6, 34, 30);
         UiTheme.ApplyIconButton(multiSortButton, toolTip, UiIconKind.Sort, "Multi-sort");
         multiSortButton.Enabled = false;
         multiSortButton.Click += (_, _) => OpenMultiSortDialog();
 
-        searchButton.SetBounds(128, 6, 34, 30);
+        searchButton.SetBounds(168, 6, 34, 30);
         UiTheme.ApplyIconButton(searchButton, toolTip, UiIconKind.Search, "Search (Ctrl+F)");
         searchButton.Enabled = false;
         searchButton.Click += (_, _) => OpenSearchDialog();
@@ -105,24 +116,47 @@ public sealed class MainForm : Form
         fileLabel.Text = "No file loaded";
         fileLabel.AutoEllipsis = true;
         fileLabel.ForeColor = UiTheme.MutedText;
-        fileLabel.SetBounds(168, 12, 932, 20);
+        fileLabel.SetBounds(208, 12, 892, 20);
         fileLabel.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
+
+        cellEditPanel.BackColor = UiTheme.Surface;
+        cellEditPanel.BorderStyle = BorderStyle.FixedSingle;
+        cellEditPanel.Padding = new Padding(8, 5, 8, 0);
+        cellEditPanel.SetBounds(GridHorizontalPadding, 46, topPanel.ClientSize.Width - GetCellEditHorizontalInset(), 30);
+        cellEditPanel.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
+        topPanel.Resize += (_, _) => AlignCellEditPanel(topPanel);
+
+        cellEditBox.ReadOnly = true;
+        cellEditBox.Dock = DockStyle.Fill;
+        cellEditBox.BorderStyle = BorderStyle.None;
+        cellEditBox.BackColor = UiTheme.Surface;
+        cellEditBox.ForeColor = UiTheme.Text;
+        cellEditBox.PlaceholderText = "Select a cell to edit its full value";
+        cellEditBox.TextChanged += CellEditBoxOnTextChanged;
+        toolTip.SetToolTip(cellEditBox, "Edit current cell");
+        cellEditPanel.Controls.Add(cellEditBox);
 
         topPanel.Controls.Add(openButton);
         topPanel.Controls.Add(saveButton);
+        topPanel.Controls.Add(reloadButton);
         topPanel.Controls.Add(multiSortButton);
         topPanel.Controls.Add(searchButton);
         topPanel.Controls.Add(fileLabel);
+        topPanel.Controls.Add(cellEditPanel);
+        AlignCellEditPanel(topPanel);
 
         statusStrip.Dock = DockStyle.Fill;
+        statusStrip.Margin = Padding.Empty;
         statusStrip.BackColor = UiTheme.Surface;
         statusStrip.Items.Add(statusLabel);
         statusLabel.ForeColor = UiTheme.MutedText;
         statusLabel.Text = "Ready";
 
         grid.Dock = DockStyle.Fill;
+        grid.Margin = new Padding(GridHorizontalPadding, 0, GridHorizontalPadding, 0);
         grid.AllowUserToAddRows = false;
         grid.AllowUserToDeleteRows = false;
+        grid.AllowUserToResizeRows = false;
         // 关闭自动尺寸：AllCells 会在每次行变化时全表重算尺寸，导致逐行可见的填充/排序。
         // 列宽改为固定起点（表头宽度 + 排序箭头，见 EnsureSortableHeaderWidth）+ 用户可拖动；行高固定。
         grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
@@ -156,6 +190,7 @@ public sealed class MainForm : Form
         grid.ColumnHeaderMouseClick += GridOnColumnHeaderMouseClick;
         grid.CellValueChanged += (_, _) =>
         {
+            UpdateCellEditBoxFromCurrentCell();
             MarkDirty();
             RefreshSearchIfActive();
         };
@@ -179,9 +214,23 @@ public sealed class MainForm : Form
         RegisterClearSelectionOnMouseDown(layout);
     }
 
+    private void AlignCellEditPanel(Control parent)
+    {
+        cellEditPanel.SetBounds(
+            GridHorizontalPadding,
+            46,
+            Math.Max(0, parent.ClientSize.Width - GetCellEditHorizontalInset()),
+            30);
+    }
+
+    private static int GetCellEditHorizontalInset()
+    {
+        return GridHorizontalPadding * 2 + SystemInformation.VerticalScrollBarWidth;
+    }
+
     private void RegisterClearSelectionOnMouseDown(Control control)
     {
-        if (ReferenceEquals(control, grid))
+        if (ReferenceEquals(control, grid) || ReferenceEquals(control, cellEditBox))
         {
             return;
         }
@@ -213,6 +262,7 @@ public sealed class MainForm : Form
         grid.ClearSelection();
         grid.CurrentCell = null;
         ClearHighlightedRow();
+        UpdateCellEditBoxFromCurrentCell();
     }
 
     private void UpdateGridSelectionHighlight(object? sender, EventArgs e)
@@ -223,11 +273,13 @@ public sealed class MainForm : Form
 
         if (grid.SelectedCells.Count == 0 || grid.CurrentCell is null || grid.CurrentCell.RowIndex < 0)
         {
+            UpdateCellEditBoxFromCurrentCell();
             return;
         }
 
         highlightedRowIndex = grid.CurrentCell.RowIndex;
         grid.Rows[highlightedRowIndex].DefaultCellStyle.BackColor = SelectedRowBackColor;
+        UpdateCellEditBoxFromCurrentCell();
     }
 
     private void ClearHighlightedRow()
@@ -254,11 +306,69 @@ public sealed class MainForm : Form
         // 改为 Programmatic 后由 ColumnHeaderMouseClick + ApplySort 全权管理排序与箭头。
         foreach (DataGridViewColumn column in grid.Columns)
         {
+            column.AutoSizeMode = DataGridViewAutoSizeColumnMode.NotSet;
             column.SortMode = DataGridViewColumnSortMode.Programmatic;
             EnsureSortableHeaderWidth(column);
         }
+        FillTrailingColumn();
 
         highlightedRowIndex = -1;
+        UpdateCellEditBoxFromCurrentCell();
+    }
+
+    private void FillTrailingColumn()
+    {
+        if (grid.Columns.Count == 0)
+        {
+            return;
+        }
+
+        grid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+    }
+
+    private void UpdateCellEditBoxFromCurrentCell()
+    {
+        isUpdatingCellEditBox = true;
+        try
+        {
+            if (grid.CurrentCell is null
+                || grid.CurrentCell.RowIndex < 0
+                || grid.CurrentCell.ColumnIndex < 0)
+            {
+                cellEditBox.Text = string.Empty;
+                cellEditBox.ReadOnly = true;
+                cellEditPanel.BackColor = Color.FromArgb(250, 252, 251);
+                cellEditBox.BackColor = cellEditPanel.BackColor;
+                return;
+            }
+
+            var column = grid.Columns[grid.CurrentCell.ColumnIndex];
+            toolTip.SetToolTip(cellEditBox, column.HeaderText);
+            cellEditBox.ReadOnly = false;
+            cellEditPanel.BackColor = UiTheme.Surface;
+            cellEditBox.BackColor = UiTheme.Surface;
+            cellEditBox.Text = grid.CurrentCell.Value?.ToString() ?? string.Empty;
+        }
+        finally
+        {
+            isUpdatingCellEditBox = false;
+        }
+    }
+
+    private void CellEditBoxOnTextChanged(object? sender, EventArgs e)
+    {
+        if (isUpdatingCellEditBox || isLoading || grid.CurrentCell is null)
+        {
+            return;
+        }
+
+        var currentValue = grid.CurrentCell.Value?.ToString() ?? string.Empty;
+        if (currentValue == cellEditBox.Text)
+        {
+            return;
+        }
+
+        grid.CurrentCell.Value = cellEditBox.Text;
     }
 
     private void GridOnColumnHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
@@ -362,6 +472,32 @@ public sealed class MainForm : Form
         {
             LoadCsvFile(dialog.FileName);
         }
+    }
+
+    private void ReloadCurrentFile()
+    {
+        if (isLoading || string.IsNullOrWhiteSpace(currentFilePath))
+        {
+            return;
+        }
+
+        grid.EndEdit();
+        if (isDirty)
+        {
+            var result = MessageBox.Show(
+                this,
+                "Discard unsaved changes and reload from disk?",
+                "Reload CSV",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (result != DialogResult.Yes)
+            {
+                return;
+            }
+        }
+
+        LoadCsvFile(currentFilePath);
     }
 
     private void LoadCsvFile(string path)
@@ -513,6 +649,7 @@ public sealed class MainForm : Form
     {
         isDirty = dirty;
         saveButton.Enabled = dirty && currentFilePath is not null;
+        reloadButton.Enabled = currentFilePath is not null;
 
         if (currentFilePath is null)
         {
@@ -530,6 +667,13 @@ public sealed class MainForm : Form
         {
             grid.EndEdit();
             SaveCurrentFile(showSavedStatus: true);
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (e.Control && e.KeyCode == Keys.R)
+        {
+            ReloadCurrentFile();
             e.SuppressKeyPress = true;
             return;
         }
