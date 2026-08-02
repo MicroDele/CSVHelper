@@ -17,7 +17,8 @@ public sealed class MainForm : Form
     private readonly Button openButton = new();
     private readonly Button saveButton = new();
     private readonly Button reloadButton = new();
-    private readonly Label fileLabel = new();
+    private readonly Label fileNameLabel = new();
+    private readonly TextBox fileNameEditBox = new();
     private readonly Panel cellEditPanel = new();
     private readonly TextBox cellEditBox = new();
     private readonly DataGridView grid = new();
@@ -37,6 +38,8 @@ public sealed class MainForm : Form
     private bool isLoading;
     private bool isUpdatingCellEditBox;
     private bool isDirty;
+    private bool isRenamingFile;
+    private bool isCommittingFileRename;
     private int contextColumnIndex = -1;
     private int contextRowIndex = -1;
     private int highlightedRowIndex = -1;
@@ -113,11 +116,19 @@ public sealed class MainForm : Form
         searchButton.Enabled = false;
         searchButton.Click += (_, _) => OpenSearchDialog();
 
-        fileLabel.Text = "No file loaded";
-        fileLabel.AutoEllipsis = true;
-        fileLabel.ForeColor = UiTheme.MutedText;
-        fileLabel.SetBounds(208, 12, 892, 20);
-        fileLabel.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
+        fileNameLabel.Text = "No file loaded";
+        fileNameLabel.AutoEllipsis = true;
+        fileNameLabel.ForeColor = UiTheme.MutedText;
+        fileNameLabel.SetBounds(208, 12, 380, 20);
+        fileNameLabel.DoubleClick += (_, _) => BeginFileRename();
+
+        fileNameEditBox.SetBounds(208, 9, 380, 24);
+        fileNameEditBox.BorderStyle = BorderStyle.FixedSingle;
+        fileNameEditBox.BackColor = UiTheme.Surface;
+        fileNameEditBox.ForeColor = UiTheme.Text;
+        fileNameEditBox.Visible = false;
+        fileNameEditBox.KeyDown += FileNameEditBoxOnKeyDown;
+        fileNameEditBox.Leave += (_, _) => CommitFileRename();
 
         cellEditPanel.BackColor = UiTheme.Surface;
         cellEditPanel.BorderStyle = BorderStyle.FixedSingle;
@@ -141,7 +152,8 @@ public sealed class MainForm : Form
         topPanel.Controls.Add(reloadButton);
         topPanel.Controls.Add(multiSortButton);
         topPanel.Controls.Add(searchButton);
-        topPanel.Controls.Add(fileLabel);
+        topPanel.Controls.Add(fileNameLabel);
+        topPanel.Controls.Add(fileNameEditBox);
         topPanel.Controls.Add(cellEditPanel);
         AlignCellEditPanel(topPanel);
 
@@ -230,7 +242,7 @@ public sealed class MainForm : Form
 
     private void RegisterClearSelectionOnMouseDown(Control control)
     {
-        if (ReferenceEquals(control, grid) || ReferenceEquals(control, cellEditBox))
+        if (ReferenceEquals(control, grid) || ReferenceEquals(control, cellEditBox) || ReferenceEquals(control, fileNameEditBox))
         {
             return;
         }
@@ -244,11 +256,13 @@ public sealed class MainForm : Form
 
     private void ClearGridSelectionOnOutsideMouseDown(object? sender, MouseEventArgs e)
     {
+        CommitFileRename();
         CommitGridInputAndClearSelection();
     }
 
     private void GridOnMouseDown(object? sender, MouseEventArgs e)
     {
+        CommitFileRename();
         var hit = grid.HitTest(e.X, e.Y);
         if (hit.Type != DataGridViewHitTestType.Cell || hit.RowIndex < 0 || hit.ColumnIndex < 0)
         {
@@ -545,7 +559,7 @@ public sealed class MainForm : Form
             grid.ResumeLayout();
             currentFilePath = path;
             SetDirty(false);
-            fileLabel.Text = path;
+            UpdateFileNameDisplay();
             Text = $"CSVHelper - {Path.GetFileName(path)}";
             SetStatus($"Loaded {table.Rows.Count} rows, {table.Columns.Count} columns");
             ResetSearch();
@@ -565,27 +579,176 @@ public sealed class MainForm : Form
         }
     }
 
-    private void SaveCurrentFile(bool showSavedStatus)
+    private bool SaveCurrentFile(bool showSavedStatus)
     {
         if (isLoading || string.IsNullOrWhiteSpace(currentFilePath) || grid.DataSource is not DataTable table)
+        {
+            return false;
+        }
+
+        try
+        {
+            var headers = table.Columns.Cast<DataColumn>().Select(column => column.ColumnName).ToArray();
+            var rows = table.Rows.Cast<DataRow>()
+                .Select(row => table.Columns.Cast<DataColumn>()
+                    .Select(column => row[column]?.ToString() ?? string.Empty)
+                    .ToArray())
+                .ToList();
+
+            var document = new CsvDocument(headers, rows);
+            File.WriteAllText(currentFilePath, document.ToCsvText(), new UTF8Encoding(false));
+            SetDirty(false);
+            if (showSavedStatus)
+            {
+                SetStatus("Saved");
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Save failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            SetStatus("Save failed");
+            return false;
+        }
+    }
+
+    private void BeginFileRename()
+    {
+        if (isLoading || string.IsNullOrWhiteSpace(currentFilePath) || isRenamingFile)
         {
             return;
         }
 
-        var headers = table.Columns.Cast<DataColumn>().Select(column => column.ColumnName).ToArray();
-        var rows = table.Rows.Cast<DataRow>()
-            .Select(row => table.Columns.Cast<DataColumn>()
-                .Select(column => row[column]?.ToString() ?? string.Empty)
-                .ToArray())
-            .ToList();
+        isRenamingFile = true;
+        fileNameEditBox.Text = Path.GetFileName(currentFilePath);
+        fileNameLabel.Visible = false;
+        fileNameEditBox.Visible = true;
+        fileNameEditBox.Focus();
+        fileNameEditBox.SelectAll();
+    }
 
-        var document = new CsvDocument(headers, rows);
-        File.WriteAllText(currentFilePath, document.ToCsvText(), new UTF8Encoding(false));
-        SetDirty(false);
-        if (showSavedStatus)
+    private void FileNameEditBoxOnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Enter)
         {
-            SetStatus("Saved");
+            CommitFileRename();
+            e.SuppressKeyPress = true;
+            return;
         }
+
+        if (e.KeyCode == Keys.Escape)
+        {
+            CancelFileRename();
+            e.SuppressKeyPress = true;
+        }
+    }
+
+    private void CommitFileRename()
+    {
+        if (!isRenamingFile || isCommittingFileRename || string.IsNullOrWhiteSpace(currentFilePath))
+        {
+            return;
+        }
+
+        isCommittingFileRename = true;
+        try
+        {
+            if (!CsvFileNameRules.TryCreateTargetPath(
+                    currentFilePath,
+                    fileNameEditBox.Text,
+                    out var targetPath,
+                    out var errorMessage))
+            {
+                ShowFileRenameError(errorMessage);
+                return;
+            }
+
+            if (string.Equals(currentFilePath, targetPath, StringComparison.Ordinal))
+            {
+                CancelFileRename();
+                return;
+            }
+
+            if (isDirty)
+            {
+                var result = MessageBox.Show(
+                    this,
+                    "Save changes before renaming?",
+                    "Rename CSV",
+                    MessageBoxButtons.YesNoCancel,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Cancel)
+                {
+                    CancelFileRename();
+                    return;
+                }
+
+                if (result == DialogResult.Yes)
+                {
+                    grid.EndEdit();
+                    if (!SaveCurrentFile(showSavedStatus: false))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if (File.Exists(targetPath))
+            {
+                ShowFileRenameError("A file with this name already exists.");
+                return;
+            }
+
+            File.Move(currentFilePath, targetPath);
+            currentFilePath = targetPath;
+            UpdateFileNameDisplay();
+            SetDirty(isDirty);
+            SetStatus("Renamed");
+            EndFileRename();
+        }
+        catch (Exception ex)
+        {
+            ShowFileRenameError(ex.Message);
+        }
+        finally
+        {
+            isCommittingFileRename = false;
+        }
+    }
+
+    private void CancelFileRename()
+    {
+        EndFileRename();
+    }
+
+    private void EndFileRename()
+    {
+        isRenamingFile = false;
+        fileNameEditBox.Visible = false;
+        fileNameLabel.Visible = true;
+    }
+
+    private void ShowFileRenameError(string message)
+    {
+        MessageBox.Show(this, message, "Rename CSV", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        fileNameEditBox.Focus();
+        fileNameEditBox.SelectAll();
+    }
+
+    private void UpdateFileNameDisplay()
+    {
+        if (string.IsNullOrWhiteSpace(currentFilePath))
+        {
+            fileNameLabel.Text = "No file loaded";
+            fileNameLabel.Cursor = Cursors.Default;
+            return;
+        }
+
+        fileNameLabel.Text = Path.GetFileName(currentFilePath);
+        fileNameLabel.Cursor = Cursors.Hand;
+        toolTip.SetToolTip(fileNameLabel, "Double-click to rename");
     }
 
     private void GridOnCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
