@@ -8,7 +8,8 @@ internal sealed record StringFilter(string ColumnName, string Operator, string V
         ">",
         "<",
         ">=",
-        "<="
+        "<=",
+        "Contains"
     };
 
     public string ToRowFilterExpression()
@@ -19,6 +20,17 @@ internal sealed record StringFilter(string ColumnName, string Operator, string V
         }
 
         var escapedColumnName = ColumnName.Replace("\\", "\\\\").Replace("]", "\\]");
+        if (Operator == "Contains")
+        {
+            var escapedLikeValue = Value
+                .Replace("]", "[]]")
+                .Replace("[", "[[]")
+                .Replace("*", "[*]")
+                .Replace("%", "[%]")
+                .Replace("'", "''");
+            return $"[{escapedColumnName}] LIKE '%{escapedLikeValue}%'";
+        }
+
         var escapedValue = Value.Replace("'", "''");
         return $"[{escapedColumnName}] {Operator} '{escapedValue}'";
     }

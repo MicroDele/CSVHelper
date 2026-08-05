@@ -33,7 +33,8 @@ foreach ($pair in @(
     @('Apple', 'one'),
     @('Mango', "O'Brien"),
     @("O'Brien", 'three'),
-    @('Zebra', 'four')
+    @('Zebra', 'four'),
+    @('100% match', '[brackets]')
 )) {
     $row = $table.NewRow()
     $row['Name'] = $pair[0]
@@ -43,13 +44,16 @@ foreach ($pair in @(
 
 Assert-Equal (Get-FilteredCount 'Name' '=' "O'Brien") 1 'Equality must escape apostrophes'
 Assert-Equal (Get-FilteredCount 'Name' '>' 'Mango') 2 'Greater-than must use string comparison'
-Assert-Equal (Get-FilteredCount 'Name' '<' 'Mango') 1 'Less-than must use string comparison'
+Assert-Equal (Get-FilteredCount 'Name' '<' 'Mango') 2 'Less-than must use string comparison'
 Assert-Equal (Get-FilteredCount 'Name' '>=' 'Mango') 3 'Greater-than-or-equal must include equality'
-Assert-Equal (Get-FilteredCount 'Name' '<=' 'Mango') 2 'Less-than-or-equal must include equality'
+Assert-Equal (Get-FilteredCount 'Name' '<=' 'Mango') 3 'Less-than-or-equal must include equality'
 Assert-Equal (Get-FilteredCount 'A]B' '=' "O'Brien") 1 'Column names containing ] must be escaped'
+Assert-Equal (Get-FilteredCount 'Name' 'Contains' 'bra') 1 'Contains must find a substring'
+Assert-Equal (Get-FilteredCount 'Name' 'Contains' '%') 1 'Contains must treat percent as literal text'
+Assert-Equal (Get-FilteredCount 'A]B' 'Contains' '[') 1 'Contains must treat brackets as literal text'
 
 $table.DefaultView.RowFilter = ''
-Assert-Equal $table.DefaultView.Count 4 'Clearing the filter must restore every row'
+Assert-Equal $table.DefaultView.Count 5 'Clearing the filter must restore every row'
 
 $table.DefaultView.Sort = '[Name] ASC'
 $table.DefaultView.RowFilter = (New-StringFilter 'Name' '>' 'Mango').ToRowFilterExpression()
