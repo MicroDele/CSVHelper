@@ -30,6 +30,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem copyHeaderItem = new("Copy Header");
 
     private readonly Button searchButton = new();
+    private readonly Button filterButton = new();
     private SearchDialog? searchDialog;
     private string lastSearchQuery = string.Empty;
     private bool lastSearchWholeCell;
@@ -48,6 +49,7 @@ public sealed class MainForm : Form
 
     private readonly Button multiSortButton = new();
     private readonly List<SortKey> sortKeys = new();
+    private StringFilter? activeFilter;
 
     public MainForm(string? initialPath)
     {
@@ -116,13 +118,18 @@ public sealed class MainForm : Form
         searchButton.Enabled = false;
         searchButton.Click += (_, _) => OpenSearchDialog();
 
+        filterButton.SetBounds(208, 6, 34, 30);
+        UiTheme.ApplyIconButton(filterButton, toolTip, UiIconKind.Filter, "Filter rows");
+        filterButton.Enabled = false;
+        filterButton.Click += (_, _) => OpenFilterDialog();
+
         fileNameLabel.Text = "No file loaded";
         fileNameLabel.AutoEllipsis = true;
         fileNameLabel.ForeColor = UiTheme.MutedText;
-        fileNameLabel.SetBounds(208, 12, 380, 20);
+        fileNameLabel.SetBounds(248, 12, 340, 20);
         fileNameLabel.DoubleClick += (_, _) => BeginFileRename();
 
-        fileNameEditBox.SetBounds(208, 9, 380, 24);
+        fileNameEditBox.SetBounds(248, 9, 340, 24);
         fileNameEditBox.BorderStyle = BorderStyle.FixedSingle;
         fileNameEditBox.BackColor = UiTheme.Surface;
         fileNameEditBox.ForeColor = UiTheme.Text;
@@ -152,6 +159,7 @@ public sealed class MainForm : Form
         topPanel.Controls.Add(reloadButton);
         topPanel.Controls.Add(multiSortButton);
         topPanel.Controls.Add(searchButton);
+        topPanel.Controls.Add(filterButton);
         topPanel.Controls.Add(fileNameLabel);
         topPanel.Controls.Add(fileNameEditBox);
         topPanel.Controls.Add(cellEditPanel);
@@ -205,6 +213,10 @@ public sealed class MainForm : Form
             UpdateCellEditBoxFromCurrentCell();
             MarkDirty();
             RefreshSearchIfActive();
+            if (activeFilter is not null && grid.DataSource is DataTable table)
+            {
+                UpdateFilterStatus(table);
+            }
         };
 
         gridMenu.Items.Add(copyCellItem);
@@ -474,6 +486,53 @@ public sealed class MainForm : Form
         }
     }
 
+    private void OpenFilterDialog()
+    {
+        if (grid.DataSource is not DataTable table)
+        {
+            return;
+        }
+
+        var columns = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+        using var dialog = new FilterDialog(columns, activeFilter);
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            ApplyFilter(dialog.Result);
+        }
+    }
+
+    private void ApplyFilter(StringFilter? filter)
+    {
+        if (grid.DataSource is not DataTable table)
+        {
+            return;
+        }
+
+        var previousExpression = table.DefaultView.RowFilter;
+        try
+        {
+            table.DefaultView.RowFilter = filter?.ToRowFilterExpression() ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            table.DefaultView.RowFilter = previousExpression;
+            MessageBox.Show(this, ex.Message, "Filter failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        activeFilter = filter;
+        CommitGridInputAndClearSelection();
+        RefreshSearchIfActive();
+        UpdateFilterStatus(table);
+    }
+
+    private void UpdateFilterStatus(DataTable table)
+    {
+        SetStatus(activeFilter is null
+            ? $"Loaded {table.Rows.Count} rows, {table.Columns.Count} columns"
+            : $"Filtered: {table.DefaultView.Count} / {table.Rows.Count} rows");
+    }
+
     private void OpenCsvFromDialog()
     {
         using var dialog = new OpenFileDialog
@@ -553,8 +612,10 @@ public sealed class MainForm : Form
             grid.SuspendLayout();
             grid.DataSource = table;
             sortKeys.Clear();
+            activeFilter = null;
             multiSortButton.Enabled = true;
             searchButton.Enabled = true;
+            filterButton.Enabled = true;
             CommitGridInputAndClearSelection();
             grid.ResumeLayout();
             currentFilePath = path;

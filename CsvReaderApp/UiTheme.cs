@@ -9,6 +9,7 @@ internal enum UiIconKind
     Up,
     Down,
     Search,
+    Filter,
     Add,
     Remove,
     Clear,
@@ -151,6 +152,14 @@ internal static class UiTheme
             case UiIconKind.Search:
                 graphics.DrawEllipse(pen, 3, 3, 10, 10);
                 graphics.DrawLine(pen, 11, 11, 16, 16);
+                break;
+            case UiIconKind.Filter:
+                graphics.DrawLine(pen, 3, 4, 17, 4);
+                graphics.DrawLine(pen, 3, 4, 9, 11);
+                graphics.DrawLine(pen, 17, 4, 11, 11);
+                graphics.DrawLine(pen, 9, 11, 9, 16);
+                graphics.DrawLine(pen, 11, 11, 11, 16);
+                graphics.DrawLine(pen, 9, 16, 11, 16);
                 break;
             case UiIconKind.Add:
                 graphics.DrawLine(pen, 5, 10, 15, 10);
