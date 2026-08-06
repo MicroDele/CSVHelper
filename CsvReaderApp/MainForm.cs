@@ -67,7 +67,7 @@ public sealed class MainForm : Form
 
         if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath))
         {
-            LoadCsvFile(initialPath);
+            Shown += async (_, _) => await LoadCsvFileAsync(initialPath);
         }
     }
 
@@ -543,7 +543,7 @@ public sealed class MainForm : Form
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
-            LoadCsvFile(dialog.FileName);
+            _ = LoadCsvFileAsync(dialog.FileName);
         }
     }
 
@@ -570,44 +570,20 @@ public sealed class MainForm : Form
             }
         }
 
-        LoadCsvFile(currentFilePath);
+        _ = LoadCsvFileAsync(currentFilePath);
     }
 
-    private void LoadCsvFile(string path)
+    private async Task LoadCsvFileAsync(string path)
     {
+        isLoading = true;
+        SetLoadingUi(isLoading: true);
+        SetLoadProgress("Loading file...");
+
         try
         {
-            isLoading = true;
-            var text = File.ReadAllText(path, new UTF8Encoding(false, true));
-            var parsed = CsvDocument.Parse(text);
-            var table = new DataTable();
-
-            foreach (var header in parsed.Headers)
-            {
-                var name = string.IsNullOrWhiteSpace(header) ? $"Column {table.Columns.Count + 1}" : header;
-                if (table.Columns.Contains(name))
-                {
-                    name = $"{name} {table.Columns.Count + 1}";
-                }
-
-                table.Columns.Add(name, typeof(string));
-            }
-
-            foreach (var row in parsed.Rows)
-            {
-                while (table.Columns.Count < row.Length)
-                {
-                    table.Columns.Add($"Column {table.Columns.Count + 1}", typeof(string));
-                }
-
-                var dataRow = table.NewRow();
-                for (var colIndex = 0; colIndex < row.Length; colIndex++)
-                {
-                    dataRow[colIndex] = row[colIndex];
-                }
-
-                table.Rows.Add(dataRow);
-            }
+            IProgress<(int Value, string Text)> progress = new Progress<(int Value, string Text)>(
+                update => SetLoadProgress(update.Text));
+            var table = await Task.Run(() => CsvDocument.LoadTableAsync(path, progress));
 
             grid.SuspendLayout();
             grid.DataSource = table;
@@ -637,7 +613,23 @@ public sealed class MainForm : Form
         finally
         {
             isLoading = false;
+            SetLoadingUi(isLoading: false);
         }
+    }
+
+    private void SetLoadingUi(bool isLoading)
+    {
+        openButton.Enabled = !isLoading;
+        saveButton.Enabled = !isLoading && !string.IsNullOrWhiteSpace(currentFilePath);
+        reloadButton.Enabled = !isLoading && !string.IsNullOrWhiteSpace(currentFilePath);
+        multiSortButton.Enabled = !isLoading && grid.DataSource is DataTable;
+        searchButton.Enabled = !isLoading && grid.DataSource is DataTable;
+        filterButton.Enabled = !isLoading && grid.DataSource is DataTable;
+    }
+
+    private void SetLoadProgress(string text)
+    {
+        SetStatus(text);
     }
 
     private bool SaveCurrentFile(bool showSavedStatus)
