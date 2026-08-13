@@ -7,7 +7,6 @@ public sealed record SortKey(string ColumnName, bool Ascending);
 
 public sealed class MainForm : Form
 {
-    private static readonly Color SelectedRowBackColor = UiTheme.Selection;
     private static readonly Color CurrentCellSelectionBackColor = UiTheme.ActiveCell;
     private static readonly Color MatchHighlightBackColor = UiTheme.Match;
     private const int SortGlyphReservedHeaderWidth = 30;
@@ -21,13 +20,14 @@ public sealed class MainForm : Form
     private readonly TextBox fileNameEditBox = new();
     private readonly Panel cellEditPanel = new();
     private readonly TextBox cellEditBox = new();
-    private readonly DataGridView grid = new();
+    private readonly CsvDataGridView grid = new();
     private readonly StatusStrip statusStrip = new();
     private readonly ToolStripStatusLabel statusLabel = new();
     private readonly ToolTip toolTip = new();
     private readonly ContextMenuStrip gridMenu = new();
-    private readonly ToolStripMenuItem copyCellItem = new("Copy Cell");
+    private readonly ToolStripMenuItem copyItem = new("Copy");
     private readonly ToolStripMenuItem copyHeaderItem = new("Copy Header");
+    private readonly ToolStripMenuItem copyRowsAsCsvItem = new("Copy as CSV");
 
     private readonly Button searchButton = new();
     private readonly Button filterButton = new();
@@ -41,9 +41,10 @@ public sealed class MainForm : Form
     private bool isDirty;
     private bool isRenamingFile;
     private bool isCommittingFileRename;
+    private bool isUpdatingRowSelection;
     private int contextColumnIndex = -1;
     private int contextRowIndex = -1;
-    private int highlightedRowIndex = -1;
+    private int rowSelectionAnchorIndex = -1;
     private List<(int RowIndex, int ColumnIndex)> currentMatches = new();
     private int currentMatchIndex = -1;
 
@@ -190,14 +191,19 @@ public sealed class MainForm : Form
         grid.EnableHeadersVisualStyles = false;
         grid.GridColor = UiTheme.Border;
         grid.RowTemplate.Height = 24;
-        grid.RowHeadersVisible = false;
-        grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
-        grid.MultiSelect = false;
+        grid.RowHeadersVisible = true;
+        grid.RowHeadersWidth = 48;
+        grid.SelectionMode = DataGridViewSelectionMode.RowHeaderSelect;
+        grid.MultiSelect = true;
         grid.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
         grid.ColumnHeadersDefaultCellStyle.BackColor = UiTheme.Surface;
         grid.ColumnHeadersDefaultCellStyle.ForeColor = UiTheme.Text;
         grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiTheme.Surface;
         grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiTheme.Text;
+        grid.RowHeadersDefaultCellStyle.BackColor = UiTheme.Surface;
+        grid.RowHeadersDefaultCellStyle.ForeColor = UiTheme.MutedText;
+        grid.RowHeadersDefaultCellStyle.SelectionBackColor = UiTheme.Selection;
+        grid.RowHeadersDefaultCellStyle.SelectionForeColor = UiTheme.Text;
         grid.DefaultCellStyle.BackColor = UiTheme.Surface;
         grid.DefaultCellStyle.ForeColor = UiTheme.Text;
         grid.DefaultCellStyle.SelectionBackColor = CurrentCellSelectionBackColor;
@@ -205,8 +211,10 @@ public sealed class MainForm : Form
         grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 252, 251);
         grid.MouseDown += GridOnMouseDown;
         grid.CellMouseDown += GridOnCellMouseDown;
+        grid.RowHeaderMouseDown += GridOnRowHeaderMouseDown;
         grid.SelectionChanged += UpdateGridSelectionHighlight;
         grid.DataBindingComplete += GridOnDataBindingComplete;
+        grid.CellPainting += GridOnCellPainting;
         grid.ColumnHeaderMouseClick += GridOnColumnHeaderMouseClick;
         grid.CellValueChanged += (_, _) =>
         {
@@ -219,15 +227,25 @@ public sealed class MainForm : Form
             }
         };
 
-        gridMenu.Items.Add(copyCellItem);
+        gridMenu.Items.Add(copyItem);
         gridMenu.Items.Add(copyHeaderItem);
-        gridMenu.Opening += (_, _) =>
+        gridMenu.Items.Add(copyRowsAsCsvItem);
+        gridMenu.Opening += (_, e) =>
         {
-            copyCellItem.Enabled = contextRowIndex >= 0 && contextColumnIndex >= 0;
-            copyHeaderItem.Enabled = contextColumnIndex >= 0;
+            var isColumnHeader = contextRowIndex < 0 && contextColumnIndex >= 0;
+            var isSelectedRow = contextRowIndex >= 0
+                && contextRowIndex < grid.Rows.Count
+                && grid.Rows[contextRowIndex].Selected;
+            var isCell = contextRowIndex >= 0 && contextColumnIndex >= 0 && !isSelectedRow;
+
+            copyItem.Visible = isCell || isSelectedRow;
+            copyHeaderItem.Visible = isColumnHeader;
+            copyRowsAsCsvItem.Visible = isSelectedRow;
+            e.Cancel = !isCell && !isColumnHeader && !isSelectedRow;
         };
-        copyCellItem.Click += (_, _) => CopySelectedCell();
+        copyItem.Click += (_, _) => CopySelection();
         copyHeaderItem.Click += (_, _) => CopySelectedHeader();
+        copyRowsAsCsvItem.Click += (_, _) => CopySelectedRowsAsCsv();
         grid.ContextMenuStrip = gridMenu;
 
         layout.Controls.Add(topPanel, 0, 0);
@@ -276,10 +294,19 @@ public sealed class MainForm : Form
     {
         CommitFileRename();
         var hit = grid.HitTest(e.X, e.Y);
-        if (hit.Type != DataGridViewHitTestType.Cell || hit.RowIndex < 0 || hit.ColumnIndex < 0)
+        if (hit.Type == DataGridViewHitTestType.RowHeader && hit.RowIndex >= 0)
         {
-            CommitGridInputAndClearSelection();
+            grid.EndEdit();
+            return;
         }
+
+        if (hit.Type == DataGridViewHitTestType.Cell && hit.RowIndex >= 0 && hit.ColumnIndex >= 0)
+        {
+            rowSelectionAnchorIndex = -1;
+            return;
+        }
+
+        CommitGridInputAndClearSelection();
     }
 
     private void CommitGridInputAndClearSelection()
@@ -287,32 +314,28 @@ public sealed class MainForm : Form
         grid.EndEdit();
         grid.ClearSelection();
         grid.CurrentCell = null;
-        ClearHighlightedRow();
+        rowSelectionAnchorIndex = -1;
+        grid.Invalidate();
         UpdateCellEditBoxFromCurrentCell();
     }
 
     private void UpdateGridSelectionHighlight(object? sender, EventArgs e)
     {
-        ClearHighlightedRow();
-
-        highlightedRowIndex = -1;
-
-        if (grid.SelectedCells.Count == 0 || grid.CurrentCell is null || grid.CurrentCell.RowIndex < 0)
+        if (isUpdatingRowSelection)
         {
-            UpdateCellEditBoxFromCurrentCell();
             return;
         }
 
-        highlightedRowIndex = grid.CurrentCell.RowIndex;
-        grid.Rows[highlightedRowIndex].DefaultCellStyle.BackColor = SelectedRowBackColor;
+        grid.Invalidate();
         UpdateCellEditBoxFromCurrentCell();
-    }
 
-    private void ClearHighlightedRow()
-    {
-        if (highlightedRowIndex >= 0 && highlightedRowIndex < grid.Rows.Count)
+        var selectedRowCount = grid.SelectedRows.Count;
+        if (selectedRowCount > 0)
         {
-            grid.Rows[highlightedRowIndex].DefaultCellStyle.BackColor = Color.Empty;
+            SetStatus(selectedRowCount == 1
+                ? "1 row selected; Shift+click for a range, Ctrl+click to select more"
+                : $"{selectedRowCount} rows selected; right-click to copy as CSV");
+            return;
         }
     }
 
@@ -323,6 +346,7 @@ public sealed class MainForm : Form
         // 导致"打开文件后整片高亮"。在此处彻底重置选中与所有行高亮。
         grid.ClearSelection();
         grid.CurrentCell = null;
+        rowSelectionAnchorIndex = -1;
         foreach (DataGridViewRow row in grid.Rows)
         {
             row.DefaultCellStyle.BackColor = Color.Empty;
@@ -338,8 +362,52 @@ public sealed class MainForm : Form
         }
         FillTrailingColumn();
 
-        highlightedRowIndex = -1;
         UpdateCellEditBoxFromCurrentCell();
+    }
+
+    private void GridOnCellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (e.Graphics is null)
+        {
+            return;
+        }
+
+        if (e.ColumnIndex < 0 && e.RowIndex >= 0)
+        {
+            var isHighlighted = grid.Rows[e.RowIndex].Selected
+                || (grid.SelectedRows.Count == 0
+                    && grid.CurrentCell?.Selected == true
+                    && grid.CurrentCell.RowIndex == e.RowIndex);
+            using var backgroundBrush = new SolidBrush(isHighlighted ? UiTheme.Selection : UiTheme.Surface);
+            e.Graphics.FillRectangle(backgroundBrush, e.CellBounds);
+            e.Paint(e.ClipBounds, DataGridViewPaintParts.Border);
+
+            var font = grid.RowHeadersDefaultCellStyle.Font ?? grid.Font;
+            var foreColor = isHighlighted ? UiTheme.Text : UiTheme.MutedText;
+            TextRenderer.DrawText(
+                e.Graphics,
+                (e.RowIndex + 1).ToString(),
+                font,
+                e.CellBounds,
+                foreColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.RowIndex < 0
+            && e.ColumnIndex >= 0
+            && grid.SelectedRows.Count == 0
+            && grid.CurrentCell?.Selected == true
+            && grid.CurrentCell.ColumnIndex == e.ColumnIndex)
+        {
+            using var backgroundBrush = new SolidBrush(UiTheme.Selection);
+            e.Graphics.FillRectangle(backgroundBrush, e.CellBounds);
+            e.Paint(
+                e.ClipBounds,
+                DataGridViewPaintParts.Border | DataGridViewPaintParts.ContentForeground);
+            e.Handled = true;
+        }
     }
 
     private void FillTrailingColumn()
@@ -401,7 +469,8 @@ public sealed class MainForm : Form
     {
         // 表头单击 = 单列排序（替换多列排序）。
         // 同一列重复点击在 升序 → 降序 → 取消 间轮转；取消后若链空则恢复文件原始顺序。
-        if (grid.DataSource is not DataTable table
+        if (e.Button != MouseButtons.Left
+            || grid.DataSource is not DataTable table
             || e.ColumnIndex < 0
             || e.ColumnIndex >= table.Columns.Count)
         {
@@ -578,6 +647,7 @@ public sealed class MainForm : Form
         isLoading = true;
         SetLoadingUi(isLoading: true);
         SetLoadProgress("Loading file...");
+        Refresh();
 
         try
         {
@@ -816,6 +886,11 @@ public sealed class MainForm : Form
 
         if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
         {
+            if (grid.Rows[e.RowIndex].Selected)
+            {
+                return;
+            }
+
             grid.ClearSelection();
             var cell = grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
             cell.Selected = true;
@@ -823,8 +898,106 @@ public sealed class MainForm : Form
         }
     }
 
-    private void CopySelectedCell()
+    private void GridOnRowHeaderMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
     {
+        if (e.RowIndex < 0 || (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right))
+        {
+            return;
+        }
+
+        CommitFileRename();
+        grid.EndEdit();
+
+        var toggleSelection = e.Button == MouseButtons.Left
+            && (ModifierKeys & Keys.Control) == Keys.Control;
+        var selectRange = e.Button == MouseButtons.Left
+            && (ModifierKeys & Keys.Shift) == Keys.Shift
+            && rowSelectionAnchorIndex >= 0
+            && rowSelectionAnchorIndex < grid.Rows.Count;
+        SelectRowFromHeader(e.RowIndex, selectRange, toggleSelection, e.Button == MouseButtons.Right);
+
+        if (e.Button == MouseButtons.Left && !selectRange)
+        {
+            rowSelectionAnchorIndex = e.RowIndex;
+        }
+
+        contextColumnIndex = -1;
+        contextRowIndex = e.Button == MouseButtons.Right ? e.RowIndex : -1;
+        grid.Invalidate();
+    }
+
+    private void SelectRowFromHeader(
+        int rowIndex,
+        bool selectRange,
+        bool toggleSelection,
+        bool preserveOnRightClick)
+    {
+        var selectedRowIndexes = grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.Index)
+            .ToArray();
+        var clickedRowWasSelected = selectedRowIndexes.Contains(rowIndex);
+
+        isUpdatingRowSelection = true;
+        try
+        {
+            grid.CurrentCell = null;
+            grid.ClearSelection();
+
+            if (selectRange)
+            {
+                var firstRowIndex = Math.Min(rowSelectionAnchorIndex, rowIndex);
+                var lastRowIndex = Math.Max(rowSelectionAnchorIndex, rowIndex);
+                for (var selectedRowIndex = firstRowIndex; selectedRowIndex <= lastRowIndex; selectedRowIndex++)
+                {
+                    grid.Rows[selectedRowIndex].Selected = true;
+                }
+            }
+            else if (toggleSelection)
+            {
+                foreach (var selectedRowIndex in selectedRowIndexes)
+                {
+                    if (selectedRowIndex != rowIndex)
+                    {
+                        grid.Rows[selectedRowIndex].Selected = true;
+                    }
+                }
+
+                if (!clickedRowWasSelected)
+                {
+                    grid.Rows[rowIndex].Selected = true;
+                }
+            }
+            else if (preserveOnRightClick && clickedRowWasSelected)
+            {
+                foreach (var selectedRowIndex in selectedRowIndexes)
+                {
+                    grid.Rows[selectedRowIndex].Selected = true;
+                }
+            }
+            else
+            {
+                grid.Rows[rowIndex].Selected = true;
+            }
+        }
+        finally
+        {
+            isUpdatingRowSelection = false;
+        }
+
+        UpdateGridSelectionHighlight(grid, EventArgs.Empty);
+    }
+
+    private void CopySelection()
+    {
+        if (contextRowIndex >= 0
+            && contextRowIndex < grid.Rows.Count
+            && grid.Rows[contextRowIndex].Selected)
+        {
+            CopySelectedRows();
+            return;
+        }
+
         if (contextRowIndex < 0 || contextColumnIndex < 0)
         {
             return;
@@ -832,6 +1005,43 @@ public sealed class MainForm : Form
 
         Clipboard.SetText(grid.Rows[contextRowIndex].Cells[contextColumnIndex].Value?.ToString() ?? string.Empty);
         SetStatus("Cell copied");
+    }
+
+    private void CopySelectedRows()
+    {
+        var columns = grid.Columns
+            .Cast<DataGridViewColumn>()
+            .Where(column => column.Visible)
+            .OrderBy(column => column.DisplayIndex)
+            .ToArray();
+        var selectedRows = grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .OrderBy(row => row.Index)
+            .ToArray();
+
+        if (columns.Length == 0 || selectedRows.Length == 0)
+        {
+            return;
+        }
+
+        var text = string.Join(
+            "\r\n",
+            selectedRows.Select(row => string.Join(
+                "\t",
+                columns.Select(column => EscapeClipboardField(
+                    Convert.ToString(row.Cells[column.Index].Value) ?? string.Empty)))));
+        Clipboard.SetText(text);
+        SetStatus($"Copied {selectedRows.Length} row(s)");
+    }
+
+    private static string EscapeClipboardField(string value)
+    {
+        if (value.Contains('"'))
+        {
+            value = value.Replace("\"", "\"\"");
+        }
+
+        return value.IndexOfAny(['\t', '"', '\r', '\n']) >= 0 ? $"\"{value}\"" : value;
     }
 
     private void CopySelectedHeader()
@@ -843,6 +1053,33 @@ public sealed class MainForm : Form
 
         Clipboard.SetText(grid.Columns[contextColumnIndex].HeaderText);
         SetStatus("Header copied");
+    }
+
+    private void CopySelectedRowsAsCsv()
+    {
+        var columns = grid.Columns
+            .Cast<DataGridViewColumn>()
+            .Where(column => column.Visible)
+            .OrderBy(column => column.DisplayIndex)
+            .ToArray();
+        var selectedRows = grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .OrderBy(row => row.Index)
+            .ToArray();
+
+        if (columns.Length == 0 || selectedRows.Length == 0)
+        {
+            return;
+        }
+
+        var headers = columns.Select(column => column.HeaderText).ToArray();
+        var rows = selectedRows
+            .Select(row => columns
+                .Select(column => Convert.ToString(row.Cells[column.Index].Value) ?? string.Empty)
+                .ToArray())
+            .ToList();
+        Clipboard.SetText(new CsvDocument(headers, rows).ToCsvText());
+        SetStatus($"Copied {selectedRows.Length} row(s) as CSV");
     }
 
     private void SetStatus(string text)
