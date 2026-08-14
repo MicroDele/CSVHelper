@@ -14,7 +14,8 @@ internal enum UiIconKind
     Remove,
     Clear,
     Ok,
-    Cancel
+    Cancel,
+    Paste
 }
 
 internal static class UiTheme
@@ -179,6 +180,20 @@ internal static class UiTheme
             case UiIconKind.Cancel:
                 graphics.DrawLine(pen, 6, 6, 14, 14);
                 graphics.DrawLine(pen, 14, 6, 6, 14);
+                break;
+            case UiIconKind.Paste:
+                // 剪贴板矩形
+                graphics.DrawRectangle(pen, 3, 4, 14, 13);
+                // 纸的顶部
+                graphics.DrawLine(pen, 3, 4, 9, 4);
+                graphics.DrawLine(pen, 9, 4, 9, 8);
+                graphics.DrawLine(pen, 9, 8, 13, 8);
+                // 文字横线
+                using (var thinPen = new Pen(color, 1.5F))
+                {
+                    graphics.DrawLine(thinPen, 6, 11, 14, 11);
+                    graphics.DrawLine(thinPen, 6, 14, 14, 14);
+                }
                 break;
         }
 

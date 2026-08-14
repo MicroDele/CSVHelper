@@ -15,7 +15,8 @@ public sealed class CsvDocument
 
     public List<string[]> Rows { get; }
 
-    public static CsvDocument Parse(string text, Action<int>? reportProgress = null)
+    /// <summary>解析所有记录，不区分表头（每一行都是一条数据记录）。</summary>
+    public static List<string[]> ParseRecords(string text, Action<int>? reportProgress = null)
     {
         var records = new List<string[]>();
         var parser = new CsvRecordParser();
@@ -37,14 +38,18 @@ public sealed class CsvDocument
         }
 
         parser.Complete(records.Add);
+        reportProgress?.Invoke(100);
+        return records;
+    }
 
+    public static CsvDocument Parse(string text, Action<int>? reportProgress = null)
+    {
+        var records = ParseRecords(text, reportProgress);
         if (records.Count == 0)
         {
-            reportProgress?.Invoke(100);
             return new CsvDocument(Array.Empty<string>(), new List<string[]>());
         }
 
-        reportProgress?.Invoke(100);
         return new CsvDocument(records[0], records.Skip(1).ToList());
     }
 
@@ -126,6 +131,68 @@ public sealed class CsvDocument
             }
 
             table.Columns.Add(name, typeof(string));
+        }
+
+        return table;
+    }
+
+    /// <summary>
+    /// 从预解析的数据（表头+行）创建 DataTable。
+    /// 行中超出列数的字段自动补列，不足的填空字符串。
+    /// </summary>
+    private static DataTable CreateTableWithHeaders(string[] headers)
+    {
+        var table = new DataTable();
+        foreach (var header in headers)
+        {
+            var name = string.IsNullOrWhiteSpace(header) ? $"Column {table.Columns.Count + 1}" : header;
+            if (table.Columns.Contains(name))
+            {
+                name = $"{name} {table.Columns.Count + 1}";
+            }
+            table.Columns.Add(name, typeof(string));
+        }
+
+        return table;
+    }
+
+    /// <summary>用表头建表，数据行字段数超过列数时自动追加列（Paste Data 场景）。</summary>
+    public static DataTable CreateTable(string[] headers, List<string[]> rows)
+    {
+        var table = CreateTableWithHeaders(headers);
+        foreach (var fields in rows)
+        {
+            while (table.Columns.Count < fields.Length)
+            {
+                table.Columns.Add($"Column {table.Columns.Count + 1}", typeof(string));
+            }
+            var row = table.NewRow();
+            for (var i = 0; i < fields.Length; i++)
+            {
+                row[i] = fields[i];
+            }
+            table.Rows.Add(row);
+        }
+
+        return table;
+    }
+
+    /// <summary>
+    /// 用表头建表，列数严格 = 表头数：数据行多余字段丢弃、不足补空字符串。
+    /// 用于 Paste Headers——表头决定最终列数，原有数据按列索引保留。
+    /// </summary>
+    public static DataTable CreateTableFixedColumns(string[] headers, List<string[]> rows)
+    {
+        var table = CreateTableWithHeaders(headers);
+        var columnCount = table.Columns.Count;
+        foreach (var fields in rows)
+        {
+            var row = table.NewRow();
+            for (var i = 0; i < columnCount; i++)
+            {
+                row[i] = i < fields.Length ? fields[i] : string.Empty;
+            }
+            table.Rows.Add(row);
         }
 
         return table;

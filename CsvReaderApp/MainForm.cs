@@ -31,6 +31,7 @@ public sealed class MainForm : Form
 
     private readonly Button searchButton = new();
     private readonly Button filterButton = new();
+    private readonly Button pasteButton = new();
     private SearchDialog? searchDialog;
     private string lastSearchQuery = string.Empty;
     private bool lastSearchWholeCell;
@@ -38,6 +39,7 @@ public sealed class MainForm : Form
     private string? currentFilePath;
     private bool isLoading;
     private bool isUpdatingCellEditBox;
+    private bool isUpdatingGridFromCellEditBox;
     private bool isDirty;
     private bool isRenamingFile;
     private bool isCommittingFileRename;
@@ -51,6 +53,9 @@ public sealed class MainForm : Form
     private readonly Button multiSortButton = new();
     private readonly List<SortKey> sortKeys = new();
     private StringFilter? activeFilter;
+
+    private readonly ToolStripMenuItem pasteHeadersItem = new("Paste Headers...");
+    private readonly ToolStripMenuItem pasteDataItem = new("Paste Data...");
 
     public MainForm(string? initialPath)
     {
@@ -95,31 +100,35 @@ public sealed class MainForm : Form
             BackColor = UiTheme.PageBackground
         };
 
-        openButton.SetBounds(8, 6, 34, 30);
+        pasteButton.SetBounds(8, 6, 34, 30);
+        UiTheme.ApplyIconButton(pasteButton, toolTip, UiIconKind.Paste, "New CSV View");
+        pasteButton.Click += (_, _) => OpenEmptyView();
+
+        openButton.SetBounds(48, 6, 34, 30);
         UiTheme.ApplyIconButton(openButton, toolTip, UiIconKind.Open, "Open CSV");
         openButton.Click += (_, _) => OpenCsvFromDialog();
 
-        saveButton.SetBounds(48, 6, 34, 30);
+        saveButton.SetBounds(88, 6, 34, 30);
         UiTheme.ApplyIconButton(saveButton, toolTip, UiIconKind.Save, "Save");
         saveButton.Enabled = false;
         saveButton.Click += (_, _) => SaveCurrentFile(showSavedStatus: true);
 
-        reloadButton.SetBounds(88, 6, 34, 30);
+        reloadButton.SetBounds(128, 6, 34, 30);
         UiTheme.ApplyIconButton(reloadButton, toolTip, UiIconKind.Reload, "Reload from disk (Ctrl+R)");
         reloadButton.Enabled = false;
         reloadButton.Click += (_, _) => ReloadCurrentFile();
 
-        multiSortButton.SetBounds(128, 6, 34, 30);
+        multiSortButton.SetBounds(168, 6, 34, 30);
         UiTheme.ApplyIconButton(multiSortButton, toolTip, UiIconKind.Sort, "Multi-sort");
         multiSortButton.Enabled = false;
         multiSortButton.Click += (_, _) => OpenMultiSortDialog();
 
-        searchButton.SetBounds(168, 6, 34, 30);
+        searchButton.SetBounds(208, 6, 34, 30);
         UiTheme.ApplyIconButton(searchButton, toolTip, UiIconKind.Search, "Search (Ctrl+F)");
         searchButton.Enabled = false;
         searchButton.Click += (_, _) => OpenSearchDialog();
 
-        filterButton.SetBounds(208, 6, 34, 30);
+        filterButton.SetBounds(248, 6, 34, 30);
         UiTheme.ApplyIconButton(filterButton, toolTip, UiIconKind.Filter, "Filter rows");
         filterButton.Enabled = false;
         filterButton.Click += (_, _) => OpenFilterDialog();
@@ -127,10 +136,10 @@ public sealed class MainForm : Form
         fileNameLabel.Text = "No file loaded";
         fileNameLabel.AutoEllipsis = true;
         fileNameLabel.ForeColor = UiTheme.MutedText;
-        fileNameLabel.SetBounds(248, 12, 340, 20);
+        fileNameLabel.SetBounds(288, 12, 340, 20);
         fileNameLabel.DoubleClick += (_, _) => BeginFileRename();
 
-        fileNameEditBox.SetBounds(248, 9, 340, 24);
+        fileNameEditBox.SetBounds(288, 9, 340, 24);
         fileNameEditBox.BorderStyle = BorderStyle.FixedSingle;
         fileNameEditBox.BackColor = UiTheme.Surface;
         fileNameEditBox.ForeColor = UiTheme.Text;
@@ -155,6 +164,7 @@ public sealed class MainForm : Form
         toolTip.SetToolTip(cellEditBox, "Edit current cell");
         cellEditPanel.Controls.Add(cellEditBox);
 
+        topPanel.Controls.Add(pasteButton);
         topPanel.Controls.Add(openButton);
         topPanel.Controls.Add(saveButton);
         topPanel.Controls.Add(reloadButton);
@@ -218,7 +228,11 @@ public sealed class MainForm : Form
         grid.ColumnHeaderMouseClick += GridOnColumnHeaderMouseClick;
         grid.CellValueChanged += (_, _) =>
         {
-            UpdateCellEditBoxFromCurrentCell();
+            if (!isUpdatingGridFromCellEditBox)
+            {
+                UpdateCellEditBoxFromCurrentCell();
+            }
+
             MarkDirty();
             RefreshSearchIfActive();
             if (activeFilter is not null && grid.DataSource is DataTable table)
@@ -227,22 +241,30 @@ public sealed class MainForm : Form
             }
         };
 
+        gridMenu.Items.Add(pasteHeadersItem);
+        gridMenu.Items.Add(pasteDataItem);
+        gridMenu.Items.Add(new ToolStripSeparator());
         gridMenu.Items.Add(copyItem);
         gridMenu.Items.Add(copyHeaderItem);
         gridMenu.Items.Add(copyRowsAsCsvItem);
         gridMenu.Opening += (_, e) =>
         {
+            var isClipboardView = currentFilePath is null && grid.DataSource is DataTable;
             var isColumnHeader = contextRowIndex < 0 && contextColumnIndex >= 0;
             var isSelectedRow = contextRowIndex >= 0
                 && contextRowIndex < grid.Rows.Count
                 && grid.Rows[contextRowIndex].Selected;
             var isCell = contextRowIndex >= 0 && contextColumnIndex >= 0 && !isSelectedRow;
 
+            pasteHeadersItem.Visible = isClipboardView;
+            pasteDataItem.Visible = isClipboardView;
             copyItem.Visible = isCell || isSelectedRow;
             copyHeaderItem.Visible = isColumnHeader;
             copyRowsAsCsvItem.Visible = isSelectedRow;
-            e.Cancel = !isCell && !isColumnHeader && !isSelectedRow;
+            e.Cancel = !isClipboardView && !isCell && !isColumnHeader && !isSelectedRow;
         };
+        pasteHeadersItem.Click += (_, _) => PasteHeadersIntoGrid();
+        pasteDataItem.Click += (_, _) => PasteDataIntoGrid();
         copyItem.Click += (_, _) => CopySelection();
         copyHeaderItem.Click += (_, _) => CopySelectedHeader();
         copyRowsAsCsvItem.Click += (_, _) => CopySelectedRowsAsCsv();
@@ -327,7 +349,10 @@ public sealed class MainForm : Form
         }
 
         grid.Invalidate();
-        UpdateCellEditBoxFromCurrentCell();
+        if (!isUpdatingGridFromCellEditBox)
+        {
+            UpdateCellEditBoxFromCurrentCell();
+        }
 
         var selectedRowCount = grid.SelectedRows.Count;
         if (selectedRowCount > 0)
@@ -341,15 +366,17 @@ public sealed class MainForm : Form
 
     private void GridOnDataBindingComplete(object? sender, DataGridViewBindingCompleteEventArgs e)
     {
-        // 绑定真正完成的时机：DataGridView 绑定后会默认选中首个单元格并触发行高亮，
-        // 而 LoadCsvFile 里紧接着的清除（CommitGridInputAndClearSelection）会因行尚未生成而无效，
-        // 导致"打开文件后整片高亮"。在此处彻底重置选中与所有行高亮。
-        grid.ClearSelection();
-        grid.CurrentCell = null;
-        rowSelectionAnchorIndex = -1;
-        foreach (DataGridViewRow row in grid.Rows)
+        // DataBindingComplete 也会在编辑绑定单元格后触发。只有加载文件时才清除默认选中，
+        // 否则会把正在通过顶部编辑框修改的 CurrentCell 置空，使编辑框清空并变成只读。
+        if (isLoading)
         {
-            row.DefaultCellStyle.BackColor = Color.Empty;
+            grid.ClearSelection();
+            grid.CurrentCell = null;
+            rowSelectionAnchorIndex = -1;
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                row.DefaultCellStyle.BackColor = Color.Empty;
+            }
         }
 
         // 列改用手动排序模式：默认 Automatic 会触发内置单列排序且不显示我们的 glyph，
@@ -462,7 +489,15 @@ public sealed class MainForm : Form
             return;
         }
 
-        grid.CurrentCell.Value = cellEditBox.Text;
+        isUpdatingGridFromCellEditBox = true;
+        try
+        {
+            grid.CurrentCell.Value = cellEditBox.Text;
+        }
+        finally
+        {
+            isUpdatingGridFromCellEditBox = false;
+        }
     }
 
     private void GridOnColumnHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
@@ -602,6 +637,142 @@ public sealed class MainForm : Form
             : $"Filtered: {table.DefaultView.Count} / {table.Rows.Count} rows");
     }
 
+    // ────────────── Paste / New CSV View ──────────────
+
+    /// <summary>当前是否为无文件剪贴板视图。</summary>
+    private bool IsClipboardView => currentFilePath is null && grid.DataSource is DataTable;
+
+    /// <summary>
+    /// 新建 CSV 视图：显示一个完全空白（无列无行）的表格，
+    /// 等待用户通过右键菜单 → Paste Headers / Paste Data 填充。
+    /// </summary>
+    private void OpenEmptyView()
+    {
+        if (isLoading)
+        {
+            return;
+        }
+
+        var emptyTable = new DataTable();
+        grid.SuspendLayout();
+        grid.DataSource = emptyTable;
+        sortKeys.Clear();
+        activeFilter = null;
+        multiSortButton.Enabled = false;
+        searchButton.Enabled = false;
+        filterButton.Enabled = false;
+        reloadButton.Enabled = false;
+        CommitGridInputAndClearSelection();
+        grid.ResumeLayout();
+
+        currentFilePath = null;
+        SetDirty(false);
+        UpdateFileNameDisplay();
+        Text = "CSVHelper - (clipboard)";
+        ResetSearch();
+        if (searchDialog is { IsDisposed: false } dialog)
+        {
+            dialog.ClearInput();
+        }
+        SetStatus("Empty view — right-click to paste headers or data");
+    }
+
+    /// <summary>
+    /// 右键菜单：仅粘贴表头到空视图。
+    /// </summary>
+    private void PasteHeadersIntoGrid()
+    {
+        if (grid.DataSource is not DataTable table)
+        {
+            return;
+        }
+
+        using var dialog = new PasteHeadersDialog();
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            var headers = dialog.ParsedHeaders;
+            // 保留已有数据行（按列索引对齐到新表头），表头决定最终列数。
+            var existingRows = table.Rows.Cast<DataRow>()
+                .Select(row => table.Columns.Cast<DataColumn>()
+                    .Select(c => row[c]?.ToString() ?? string.Empty)
+                    .ToArray())
+                .ToList();
+            var newTable = CsvDocument.CreateTableFixedColumns(headers, existingRows);
+            grid.DataSource = newTable;
+            multiSortButton.Enabled = true;
+            searchButton.Enabled = true;
+            filterButton.Enabled = true;
+            SetStatus(existingRows.Count == 0
+                ? $"Empty table — {headers.Length} columns. Right-click again to paste data."
+                : $"Applied {headers.Length} headers to {existingRows.Count} row(s)");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Paste failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// 右键菜单：粘贴 CSV 数据。粘贴内容全部为数据行（不抽表头）。
+    /// 表头规则：已有表头则沿用（数据更宽时追加 "Column N"）；否则按列数生成空表头。
+    /// </summary>
+    private void PasteDataIntoGrid()
+    {
+        if (grid.DataSource is not DataTable table)
+        {
+            return;
+        }
+
+        using var dialog = new PasteDataDialog();
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            var dataRows = dialog.ParsedRows;
+            if (dataRows.Count == 0)
+            {
+                return;
+            }
+
+            var dataColumnCount = dataRows.Max(row => row.Length);
+            var headers = ResolveHeaders(table, dataColumnCount);
+            var newTable = CsvDocument.CreateTable(headers, dataRows);
+            grid.DataSource = newTable;
+            multiSortButton.Enabled = true;
+            searchButton.Enabled = true;
+            filterButton.Enabled = true;
+            SetStatus($"Loaded {dataRows.Count} rows, {headers.Length} columns");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Paste failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// 推导粘贴数据所需的表头：沿用已有表头，不足部分补 "Column N"；无表头则全部生成。
+    /// </summary>
+    private static string[] ResolveHeaders(DataTable table, int dataColumnCount)
+    {
+        var existing = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+        var length = Math.Max(existing.Count, dataColumnCount);
+        var headers = new string[length];
+        for (var i = 0; i < length; i++)
+        {
+            headers[i] = i < existing.Count ? existing[i] : $"Column {i + 1}";
+        }
+
+        return headers;
+    }
+
     private void OpenCsvFromDialog()
     {
         using var dialog = new OpenFileDialog
@@ -690,11 +861,11 @@ public sealed class MainForm : Form
     private void SetLoadingUi(bool isLoading)
     {
         openButton.Enabled = !isLoading;
-        saveButton.Enabled = !isLoading && !string.IsNullOrWhiteSpace(currentFilePath);
-        reloadButton.Enabled = !isLoading && !string.IsNullOrWhiteSpace(currentFilePath);
-        multiSortButton.Enabled = !isLoading && grid.DataSource is DataTable;
-        searchButton.Enabled = !isLoading && grid.DataSource is DataTable;
-        filterButton.Enabled = !isLoading && grid.DataSource is DataTable;
+        saveButton.Enabled = !isLoading;
+        reloadButton.Enabled = !isLoading && currentFilePath is not null;
+        multiSortButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
+        searchButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
+        filterButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
     }
 
     private void SetLoadProgress(string text)
@@ -704,11 +875,48 @@ public sealed class MainForm : Form
 
     private bool SaveCurrentFile(bool showSavedStatus)
     {
-        if (isLoading || string.IsNullOrWhiteSpace(currentFilePath) || grid.DataSource is not DataTable table)
+        if (isLoading || grid.DataSource is not DataTable table)
         {
             return false;
         }
 
+        // 无文件路径（剪贴板视图）→ 弹出另存为
+        if (string.IsNullOrWhiteSpace(currentFilePath))
+        {
+            return SaveAs(table, showSavedStatus);
+        }
+
+        return SaveToPath(currentFilePath, table, showSavedStatus);
+    }
+
+    private bool SaveAs(DataTable table, bool showSavedStatus)
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+            Title = "Save CSV As",
+            FileName = "export.csv"
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return false;
+        }
+
+        if (SaveToPath(dialog.FileName, table, showSavedStatus))
+        {
+            currentFilePath = dialog.FileName;
+            UpdateFileNameDisplay();
+            Text = $"CSVHelper - {Path.GetFileName(currentFilePath)}";
+            SetDirty(isDirty);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool SaveToPath(string path, DataTable table, bool showSavedStatus)
+    {
         try
         {
             var headers = table.Columns.Cast<DataColumn>().Select(column => column.ColumnName).ToArray();
@@ -719,7 +927,7 @@ public sealed class MainForm : Form
                 .ToList();
 
             var document = new CsvDocument(headers, rows);
-            File.WriteAllText(currentFilePath, document.ToCsvText(), new UTF8Encoding(false));
+            File.WriteAllText(path, document.ToCsvText(), new UTF8Encoding(false));
             SetDirty(false);
             if (showSavedStatus)
             {
@@ -1089,24 +1297,27 @@ public sealed class MainForm : Form
 
     private void MarkDirty()
     {
-        if (isLoading || currentFilePath is null)
+        if (isLoading)
         {
             return;
         }
 
         SetDirty(true);
-        SetStatus("Modified");
+        if (currentFilePath is not null)
+        {
+            SetStatus("Modified");
+        }
     }
 
     private void SetDirty(bool dirty)
     {
         isDirty = dirty;
-        saveButton.Enabled = dirty && currentFilePath is not null;
+        saveButton.Enabled = dirty || IsClipboardView;
         reloadButton.Enabled = currentFilePath is not null;
 
         if (currentFilePath is null)
         {
-            Text = "CSVHelper";
+            Text = "CSVHelper - (clipboard)";
             return;
         }
 
@@ -1140,28 +1351,31 @@ public sealed class MainForm : Form
 
     private void MainFormOnFormClosing(object? sender, FormClosingEventArgs e)
     {
-        if (!isDirty)
+        if (!isDirty && !IsClipboardView)
         {
             return;
         }
 
-        var result = MessageBox.Show(
-            this,
-            "Save changes before closing?",
-            "CSVHelper",
-            MessageBoxButtons.YesNoCancel,
-            MessageBoxIcon.Question);
-
-        if (result == DialogResult.Cancel)
+        if (isDirty)
         {
-            e.Cancel = true;
-            return;
-        }
+            var result = MessageBox.Show(
+                this,
+                currentFilePath is not null ? "Save changes before closing?" : "Save clipboard content before closing?",
+                "CSVHelper",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question);
 
-        if (result == DialogResult.Yes)
-        {
-            grid.EndEdit();
-            SaveCurrentFile(showSavedStatus: false);
+            if (result == DialogResult.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            if (result == DialogResult.Yes)
+            {
+                grid.EndEdit();
+                SaveCurrentFile(showSavedStatus: false);
+            }
         }
     }
 
