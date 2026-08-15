@@ -1,10 +1,10 @@
 namespace CsvReaderApp;
 
 /// <summary>
-/// 粘贴 CSV 数据的对话框，编辑框加高以展示多行数据。
-/// 粘贴内容全部视为数据行（不抽取表头）。
+/// 编辑 CSV 数据的对话框，编辑框加高以展示多行数据，打开时回填已有行。
+/// 内容全部视为数据行（不抽取表头）。
 /// </summary>
-internal sealed class PasteDataDialog : Form
+internal sealed class EditDataDialog : Form
 {
     private readonly Label label = new();
     private readonly TextBox box = new();
@@ -12,9 +12,10 @@ internal sealed class PasteDataDialog : Form
     private readonly Button cancelButton = new();
     private readonly ToolTip toolTip = new();
 
-    public PasteDataDialog()
+    /// <param name="currentData">已有数据行（CSV 文本），用于回填；无则传空。</param>
+    public EditDataDialog(string currentData = "")
     {
-        Text = "Paste Data";
+        Text = "Edit Data";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -24,6 +25,17 @@ internal sealed class PasteDataDialog : Form
         UiTheme.ApplyForm(this);
 
         BuildUi();
+        // 不默认全选：末尾补一个换行（Apply 时会被 Trim 掉），
+        // 光标落在最后一行数据之后的空行，方便直接追加。
+        if (currentData.Length > 0)
+        {
+            currentData += "\r\n";
+        }
+
+        box.Text = currentData;
+        box.SelectionStart = box.Text.Length;
+        box.SelectionLength = 0;
+        box.ScrollToCaret();
 
         KeyDown += (_, e) =>
         {

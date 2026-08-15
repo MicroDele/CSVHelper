@@ -1,9 +1,9 @@
 namespace CsvReaderApp;
 
 /// <summary>
-/// 仅粘贴表头（列名）的小对话框，逗号分隔。
+/// 编辑表头（列名）的小对话框，逗号分隔。打开时回填已有表头。
 /// </summary>
-internal sealed class PasteHeadersDialog : Form
+internal sealed class EditHeadersDialog : Form
 {
     private readonly Label label = new();
     private readonly TextBox box = new();
@@ -11,9 +11,10 @@ internal sealed class PasteHeadersDialog : Form
     private readonly Button cancelButton = new();
     private readonly ToolTip toolTip = new();
 
-    public PasteHeadersDialog()
+    /// <param name="currentHeaders">已有表头（逗号拼接后的文本），用于回填；无则传空。</param>
+    public EditHeadersDialog(string currentHeaders = "")
     {
-        Text = "Paste Headers";
+        Text = "Edit Headers";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -23,6 +24,7 @@ internal sealed class PasteHeadersDialog : Form
         UiTheme.ApplyForm(this);
 
         BuildUi();
+        box.Text = currentHeaders;
 
         KeyDown += (_, e) =>
         {

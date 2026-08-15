@@ -54,8 +54,8 @@ public sealed class MainForm : Form
     private readonly List<SortKey> sortKeys = new();
     private StringFilter? activeFilter;
 
-    private readonly ToolStripMenuItem pasteHeadersItem = new("Paste Headers...");
-    private readonly ToolStripMenuItem pasteDataItem = new("Paste Data...");
+    private readonly ToolStripMenuItem editHeadersItem = new("Edit Headers...");
+    private readonly ToolStripMenuItem editDataItem = new("Edit Data...");
 
     public MainForm(string? initialPath)
     {
@@ -241,8 +241,8 @@ public sealed class MainForm : Form
             }
         };
 
-        gridMenu.Items.Add(pasteHeadersItem);
-        gridMenu.Items.Add(pasteDataItem);
+        gridMenu.Items.Add(editHeadersItem);
+        gridMenu.Items.Add(editDataItem);
         gridMenu.Items.Add(new ToolStripSeparator());
         gridMenu.Items.Add(copyItem);
         gridMenu.Items.Add(copyHeaderItem);
@@ -256,15 +256,15 @@ public sealed class MainForm : Form
                 && grid.Rows[contextRowIndex].Selected;
             var isCell = contextRowIndex >= 0 && contextColumnIndex >= 0 && !isSelectedRow;
 
-            pasteHeadersItem.Visible = isClipboardView;
-            pasteDataItem.Visible = isClipboardView;
+            editHeadersItem.Visible = isClipboardView;
+            editDataItem.Visible = isClipboardView;
             copyItem.Visible = isCell || isSelectedRow;
             copyHeaderItem.Visible = isColumnHeader;
             copyRowsAsCsvItem.Visible = isSelectedRow;
             e.Cancel = !isClipboardView && !isCell && !isColumnHeader && !isSelectedRow;
         };
-        pasteHeadersItem.Click += (_, _) => PasteHeadersIntoGrid();
-        pasteDataItem.Click += (_, _) => PasteDataIntoGrid();
+        editHeadersItem.Click += (_, _) => EditHeadersIntoGrid();
+        editDataItem.Click += (_, _) => EditDataIntoGrid();
         copyItem.Click += (_, _) => CopySelection();
         copyHeaderItem.Click += (_, _) => CopySelectedHeader();
         copyRowsAsCsvItem.Click += (_, _) => CopySelectedRowsAsCsv();
@@ -644,7 +644,7 @@ public sealed class MainForm : Form
 
     /// <summary>
     /// 新建 CSV 视图：显示一个完全空白（无列无行）的表格，
-    /// 等待用户通过右键菜单 → Paste Headers / Paste Data 填充。
+    /// 等待用户通过右键菜单 → Edit Headers / Edit Data 填充。
     /// </summary>
     private void OpenEmptyView()
     {
@@ -674,20 +674,21 @@ public sealed class MainForm : Form
         {
             dialog.ClearInput();
         }
-        SetStatus("Empty view — right-click to paste headers or data");
+        SetStatus("Empty view — right-click to edit headers or data");
     }
 
     /// <summary>
-    /// 右键菜单：仅粘贴表头到空视图。
+    /// 右键菜单：编辑表头。打开时回填已有表头，应用时替换表头并保留数据行。
     /// </summary>
-    private void PasteHeadersIntoGrid()
+    private void EditHeadersIntoGrid()
     {
         if (grid.DataSource is not DataTable table)
         {
             return;
         }
 
-        using var dialog = new PasteHeadersDialog();
+        var currentHeaders = string.Join(", ", table.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
+        using var dialog = new EditHeadersDialog(currentHeaders);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -697,11 +698,7 @@ public sealed class MainForm : Form
         {
             var headers = dialog.ParsedHeaders;
             // 保留已有数据行（按列索引对齐到新表头），表头决定最终列数。
-            var existingRows = table.Rows.Cast<DataRow>()
-                .Select(row => table.Columns.Cast<DataColumn>()
-                    .Select(c => row[c]?.ToString() ?? string.Empty)
-                    .ToArray())
-                .ToList();
+            var existingRows = ExtractRows(table);
             var newTable = CsvDocument.CreateTableFixedColumns(headers, existingRows);
             grid.DataSource = newTable;
             multiSortButton.Enabled = true;
@@ -718,17 +715,19 @@ public sealed class MainForm : Form
     }
 
     /// <summary>
-    /// 右键菜单：粘贴 CSV 数据。粘贴内容全部为数据行（不抽表头）。
+    /// 右键菜单：编辑 CSV 数据。打开时回填已有行，编辑框内容全部为数据行（不抽表头），
+    /// 应用时整体替换为编辑框解析结果。
     /// 表头规则：已有表头则沿用（数据更宽时追加 "Column N"）；否则按列数生成空表头。
     /// </summary>
-    private void PasteDataIntoGrid()
+    private void EditDataIntoGrid()
     {
         if (grid.DataSource is not DataTable table)
         {
             return;
         }
 
-        using var dialog = new PasteDataDialog();
+        var currentData = CsvDocument.RowsToCsvText(ExtractRows(table));
+        using var dialog = new EditDataDialog(currentData);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -772,6 +771,15 @@ public sealed class MainForm : Form
 
         return headers;
     }
+
+    /// <summary>
+    /// 提取 DataTable 的全部数据行为字符串数组（不含表头）。
+    /// </summary>
+    private static List<string[]> ExtractRows(DataTable table) => table.Rows.Cast<DataRow>()
+        .Select(row => table.Columns.Cast<DataColumn>()
+            .Select(c => row[c]?.ToString() ?? string.Empty)
+            .ToArray())
+        .ToList();
 
     private void OpenCsvFromDialog()
     {

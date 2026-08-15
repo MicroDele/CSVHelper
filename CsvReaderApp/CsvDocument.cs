@@ -205,6 +205,10 @@ public sealed class CsvDocument
         return string.Join("\r\n", lines);
     }
 
+    /// <summary>将数据行序列化为 CSV 文本（不含表头行）。</summary>
+    public static string RowsToCsvText(List<string[]> rows) =>
+        string.Join("\r\n", rows.Select(row => string.Join(",", row.Select(EscapeField))));
+
     private static string EscapeField(string? value)
     {
         value ??= string.Empty;
