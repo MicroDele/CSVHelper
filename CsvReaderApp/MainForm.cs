@@ -9,6 +9,7 @@ public sealed class MainForm : Form
 {
     private static readonly Color CurrentCellSelectionBackColor = UiTheme.ActiveCell;
     private static readonly Color MatchHighlightBackColor = UiTheme.Match;
+    private static readonly Color RowTagColor = Color.FromArgb(245, 154, 35);
     private const int SortGlyphReservedHeaderWidth = 30;
     private const int MinimumSortableHeaderWidth = 56;
     private const int GridHorizontalPadding = 8;
@@ -16,6 +17,7 @@ public sealed class MainForm : Form
     private readonly Button openButton = new();
     private readonly Button saveButton = new();
     private readonly Button reloadButton = new();
+    private readonly Button clearTagsButton = new();
     private readonly Label fileNameLabel = new();
     private readonly TextBox fileNameEditBox = new();
     private readonly Panel cellEditPanel = new();
@@ -52,6 +54,7 @@ public sealed class MainForm : Form
 
     private readonly Button multiSortButton = new();
     private readonly List<SortKey> sortKeys = new();
+    private readonly HashSet<DataRow> taggedRows = new();
     private StringFilter? activeFilter;
 
     private readonly ToolStripMenuItem editHeadersItem = new("Edit Headers...");
@@ -133,13 +136,18 @@ public sealed class MainForm : Form
         filterButton.Enabled = false;
         filterButton.Click += (_, _) => OpenFilterDialog();
 
+        clearTagsButton.SetBounds(288, 6, 34, 30);
+        UiTheme.ApplyIconButton(clearTagsButton, toolTip, UiIconKind.Clear, "Clear all tags");
+        clearTagsButton.Enabled = false;
+        clearTagsButton.Click += (_, _) => ClearAllTags();
+
         fileNameLabel.Text = "No file loaded";
         fileNameLabel.AutoEllipsis = true;
         fileNameLabel.ForeColor = UiTheme.MutedText;
-        fileNameLabel.SetBounds(288, 12, 340, 20);
+        fileNameLabel.SetBounds(328, 12, 340, 20);
         fileNameLabel.DoubleClick += (_, _) => BeginFileRename();
 
-        fileNameEditBox.SetBounds(288, 9, 340, 24);
+        fileNameEditBox.SetBounds(328, 9, 340, 24);
         fileNameEditBox.BorderStyle = BorderStyle.FixedSingle;
         fileNameEditBox.BackColor = UiTheme.Surface;
         fileNameEditBox.ForeColor = UiTheme.Text;
@@ -171,6 +179,7 @@ public sealed class MainForm : Form
         topPanel.Controls.Add(multiSortButton);
         topPanel.Controls.Add(searchButton);
         topPanel.Controls.Add(filterButton);
+        topPanel.Controls.Add(clearTagsButton);
         topPanel.Controls.Add(fileNameLabel);
         topPanel.Controls.Add(fileNameEditBox);
         topPanel.Controls.Add(cellEditPanel);
@@ -411,6 +420,17 @@ public sealed class MainForm : Form
 
             var font = grid.RowHeadersDefaultCellStyle.Font ?? grid.Font;
             var foreColor = isHighlighted ? UiTheme.Text : UiTheme.MutedText;
+            if (IsRowTagged(e.RowIndex))
+            {
+                using var tagBrush = new SolidBrush(RowTagColor);
+                var tagBounds = new Rectangle(
+                    e.CellBounds.Left + 3,
+                    e.CellBounds.Top + 4,
+                    4,
+                    Math.Max(1, e.CellBounds.Height - 8));
+                e.Graphics.FillRectangle(tagBrush, tagBounds);
+            }
+
             TextRenderer.DrawText(
                 e.Graphics,
                 (e.RowIndex + 1).ToString(),
@@ -656,6 +676,7 @@ public sealed class MainForm : Form
         var emptyTable = new DataTable();
         grid.SuspendLayout();
         grid.DataSource = emptyTable;
+        ClearAllTags(showStatus: false);
         sortKeys.Clear();
         activeFilter = null;
         multiSortButton.Enabled = false;
@@ -701,6 +722,7 @@ public sealed class MainForm : Form
             var existingRows = ExtractRows(table);
             var newTable = CsvDocument.CreateTableFixedColumns(headers, existingRows);
             grid.DataSource = newTable;
+            ClearAllTags(showStatus: false);
             multiSortButton.Enabled = true;
             searchButton.Enabled = true;
             filterButton.Enabled = true;
@@ -745,6 +767,7 @@ public sealed class MainForm : Form
             var headers = ResolveHeaders(table, dataColumnCount);
             var newTable = CsvDocument.CreateTable(headers, dataRows);
             grid.DataSource = newTable;
+            ClearAllTags(showStatus: false);
             multiSortButton.Enabled = true;
             searchButton.Enabled = true;
             filterButton.Enabled = true;
@@ -836,6 +859,7 @@ public sealed class MainForm : Form
 
             grid.SuspendLayout();
             grid.DataSource = table;
+            ClearAllTags(showStatus: false);
             sortKeys.Clear();
             activeFilter = null;
             multiSortButton.Enabled = true;
@@ -874,6 +898,7 @@ public sealed class MainForm : Form
         multiSortButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
         searchButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
         filterButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
+        clearTagsButton.Enabled = !isLoading && taggedRows.Count > 0;
     }
 
     private void SetLoadProgress(string text)
@@ -1124,6 +1149,14 @@ public sealed class MainForm : Form
         CommitFileRename();
         grid.EndEdit();
 
+        if (e.Button == MouseButtons.Left && (ModifierKeys & Keys.Alt) == Keys.Alt)
+        {
+            ToggleRowTag(e.RowIndex);
+            contextColumnIndex = -1;
+            contextRowIndex = -1;
+            return;
+        }
+
         var toggleSelection = e.Button == MouseButtons.Left
             && (ModifierKeys & Keys.Control) == Keys.Control;
         var selectRange = e.Button == MouseButtons.Left
@@ -1202,6 +1235,118 @@ public sealed class MainForm : Form
         }
 
         UpdateGridSelectionHighlight(grid, EventArgs.Empty);
+    }
+
+    private bool IsRowTagged(int rowIndex)
+    {
+        return GetBoundDataRow(rowIndex) is { } row && taggedRows.Contains(row);
+    }
+
+    private DataRow? GetBoundDataRow(int rowIndex)
+    {
+        if (rowIndex < 0 || rowIndex >= grid.Rows.Count)
+        {
+            return null;
+        }
+
+        return grid.Rows[rowIndex].DataBoundItem is DataRowView rowView ? rowView.Row : null;
+    }
+
+    private void ToggleRowTag(int rowIndex)
+    {
+        var row = GetBoundDataRow(rowIndex);
+        if (row is null)
+        {
+            return;
+        }
+
+        var isTagged = taggedRows.Add(row);
+        if (!isTagged)
+        {
+            taggedRows.Remove(row);
+        }
+
+        clearTagsButton.Enabled = !isLoading && taggedRows.Count > 0;
+        grid.InvalidateRow(rowIndex);
+        SetStatus(isTagged
+            ? $"Tagged row {rowIndex + 1} — {taggedRows.Count} tag(s)"
+            : $"Removed tag from row {rowIndex + 1} — {taggedRows.Count} tag(s)");
+    }
+
+    private void ClearAllTags(bool showStatus = true)
+    {
+        var clearedCount = taggedRows.Count;
+        taggedRows.Clear();
+        clearTagsButton.Enabled = false;
+        grid.Invalidate();
+
+        if (showStatus && clearedCount > 0)
+        {
+            SetStatus($"Cleared {clearedCount} tag(s)");
+        }
+    }
+
+    private void NavigateTag(int direction)
+    {
+        if (isLoading || direction == 0)
+        {
+            return;
+        }
+
+        grid.EndEdit();
+        var visibleTaggedRows = Enumerable.Range(0, grid.Rows.Count)
+            .Where(IsRowTagged)
+            .ToList();
+        if (visibleTaggedRows.Count == 0)
+        {
+            SetStatus(taggedRows.Count == 0
+                ? "No tagged rows"
+                : $"{taggedRows.Count} tagged row(s) hidden by the current filter");
+            return;
+        }
+
+        var currentRowIndex = grid.CurrentCell?.RowIndex ?? -1;
+        int targetPosition;
+        if (direction > 0)
+        {
+            targetPosition = visibleTaggedRows.FindIndex(rowIndex => rowIndex > currentRowIndex);
+            if (targetPosition < 0)
+            {
+                targetPosition = 0;
+            }
+        }
+        else
+        {
+            var previousTo = currentRowIndex >= 0 ? currentRowIndex : int.MaxValue;
+            targetPosition = visibleTaggedRows.FindLastIndex(rowIndex => rowIndex < previousTo);
+            if (targetPosition < 0)
+            {
+                targetPosition = visibleTaggedRows.Count - 1;
+            }
+        }
+
+        var targetRowIndex = visibleTaggedRows[targetPosition];
+        grid.ClearSelection();
+        grid.CurrentCell = grid.Rows[targetRowIndex].Cells[0];
+        grid.Rows[targetRowIndex].Selected = true;
+        rowSelectionAnchorIndex = targetRowIndex;
+        grid.Focus();
+
+        var firstVisible = grid.FirstDisplayedScrollingRowIndex;
+        var visibleCount = grid.DisplayedRowCount(false);
+        if (firstVisible < 0 || targetRowIndex < firstVisible)
+        {
+            grid.FirstDisplayedScrollingRowIndex = targetRowIndex;
+        }
+        else if (visibleCount > 0 && targetRowIndex > firstVisible + visibleCount - 1)
+        {
+            grid.FirstDisplayedScrollingRowIndex = Math.Max(0, targetRowIndex - visibleCount + 1);
+        }
+
+        var hiddenCount = taggedRows.Count - visibleTaggedRows.Count;
+        SetStatus(hiddenCount == 0
+            ? $"Tag {targetPosition + 1} / {visibleTaggedRows.Count} — row {targetRowIndex + 1}"
+            : $"Tag {targetPosition + 1} / {visibleTaggedRows.Count} visible — row {targetRowIndex + 1} ({hiddenCount} hidden)");
     }
 
     private void CopySelection()
@@ -1335,6 +1480,22 @@ public sealed class MainForm : Form
 
     private void MainFormOnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Alt && e.KeyCode == Keys.Down)
+        {
+            NavigateTag(direction: 1);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (e.Alt && e.KeyCode == Keys.Up)
+        {
+            NavigateTag(direction: -1);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
         if (e.Control && e.KeyCode == Keys.S)
         {
             grid.EndEdit();
