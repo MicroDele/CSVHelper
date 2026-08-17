@@ -869,7 +869,7 @@ public sealed class MainForm : Form
     private void SetLoadingUi(bool isLoading)
     {
         openButton.Enabled = !isLoading;
-        saveButton.Enabled = !isLoading;
+        saveButton.Enabled = !isLoading && (isDirty || IsClipboardView);
         reloadButton.Enabled = !isLoading && currentFilePath is not null;
         multiSortButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
         searchButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
