@@ -13,6 +13,7 @@ internal enum UiIconKind
     Add,
     Remove,
     Clear,
+    Reset,
     Ok,
     Cancel,
     Paste
@@ -173,6 +174,13 @@ internal static class UiTheme
                 graphics.DrawLine(pen, 6, 6, 14, 14);
                 graphics.DrawLine(pen, 14, 6, 6, 14);
                 graphics.DrawLine(pen, 5, 17, 15, 17);
+                break;
+            case UiIconKind.Reset:
+                graphics.DrawArc(pen, 4, 4, 12, 12, 35, 280);
+                graphics.DrawLine(pen, 14, 4, 16, 8);
+                graphics.DrawLine(pen, 14, 4, 10, 4);
+                graphics.DrawLine(pen, 8, 8, 12, 12);
+                graphics.DrawLine(pen, 12, 8, 8, 12);
                 break;
             case UiIconKind.Ok:
                 graphics.DrawLines(pen, new[] { new Point(4, 10), new Point(8, 14), new Point(16, 6) });

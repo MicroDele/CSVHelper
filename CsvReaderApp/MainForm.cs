@@ -9,7 +9,9 @@ public sealed class MainForm : Form
 {
     private static readonly Color CurrentCellSelectionBackColor = UiTheme.ActiveCell;
     private static readonly Color MatchHighlightBackColor = UiTheme.Match;
-    private static readonly Color RowTagColor = Color.FromArgb(245, 154, 35);
+    private static readonly Color RowTagBackColor = Color.FromArgb(255, 247, 232);
+    private static readonly Color CellTagBackColor = Color.FromArgb(255, 226, 179);
+    private static readonly Color RowTagMarkerColor = Color.FromArgb(245, 154, 35);
     private const int SortGlyphReservedHeaderWidth = 30;
     private const int MinimumSortableHeaderWidth = 56;
     private const int FirstRowCellHorizontalPadding = 16;
@@ -19,6 +21,7 @@ public sealed class MainForm : Form
     private readonly Button saveButton = new();
     private readonly Button reloadButton = new();
     private readonly Button clearTagsButton = new();
+    private readonly Button clearConditionsButton = new();
     private readonly Label fileNameLabel = new();
     private readonly TextBox fileNameEditBox = new();
     private readonly Panel cellEditPanel = new();
@@ -56,6 +59,7 @@ public sealed class MainForm : Form
     private readonly Button multiSortButton = new();
     private readonly List<SortKey> sortKeys = new();
     private readonly HashSet<DataRow> taggedRows = new();
+    private readonly HashSet<(DataRow Row, DataColumn Column)> taggedCells = new();
     private StringFilter? activeFilter;
 
     private readonly ToolStripMenuItem editHeadersItem = new("Edit Headers...");
@@ -78,6 +82,10 @@ public sealed class MainForm : Form
         if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath))
         {
             Shown += async (_, _) => await LoadCsvFileAsync(initialPath);
+        }
+        else
+        {
+            OpenEmptyView();
         }
     }
 
@@ -142,13 +150,22 @@ public sealed class MainForm : Form
         clearTagsButton.Enabled = false;
         clearTagsButton.Click += (_, _) => ClearAllTags();
 
+        clearConditionsButton.SetBounds(328, 6, 34, 30);
+        UiTheme.ApplyIconButton(
+            clearConditionsButton,
+            toolTip,
+            UiIconKind.Reset,
+            "Clear filter, sort, and tags");
+        clearConditionsButton.Enabled = false;
+        clearConditionsButton.Click += (_, _) => ClearAllConditions();
+
         fileNameLabel.Text = "No file loaded";
         fileNameLabel.AutoEllipsis = true;
         fileNameLabel.ForeColor = UiTheme.MutedText;
-        fileNameLabel.SetBounds(328, 12, 340, 20);
+        fileNameLabel.SetBounds(368, 12, 340, 20);
         fileNameLabel.DoubleClick += (_, _) => BeginFileRename();
 
-        fileNameEditBox.SetBounds(328, 9, 340, 24);
+        fileNameEditBox.SetBounds(368, 9, 340, 24);
         fileNameEditBox.BorderStyle = BorderStyle.FixedSingle;
         fileNameEditBox.BackColor = UiTheme.Surface;
         fileNameEditBox.ForeColor = UiTheme.Text;
@@ -181,6 +198,7 @@ public sealed class MainForm : Form
         topPanel.Controls.Add(searchButton);
         topPanel.Controls.Add(filterButton);
         topPanel.Controls.Add(clearTagsButton);
+        topPanel.Controls.Add(clearConditionsButton);
         topPanel.Controls.Add(fileNameLabel);
         topPanel.Controls.Add(fileNameEditBox);
         topPanel.Controls.Add(cellEditPanel);
@@ -232,8 +250,10 @@ public sealed class MainForm : Form
         grid.MouseDown += GridOnMouseDown;
         grid.CellMouseDown += GridOnCellMouseDown;
         grid.RowHeaderMouseDown += GridOnRowHeaderMouseDown;
+        grid.AltCellMouseDown += GridOnAltCellMouseDown;
         grid.SelectionChanged += UpdateGridSelectionHighlight;
         grid.DataBindingComplete += GridOnDataBindingComplete;
+        grid.CellFormatting += GridOnCellFormatting;
         grid.CellPainting += GridOnCellPainting;
         grid.ColumnHeaderMouseClick += GridOnColumnHeaderMouseClick;
         grid.CellValueChanged += (_, _) =>
@@ -415,7 +435,10 @@ public sealed class MainForm : Form
                 || (grid.SelectedRows.Count == 0
                     && grid.CurrentCell?.Selected == true
                     && grid.CurrentCell.RowIndex == e.RowIndex);
-            using var backgroundBrush = new SolidBrush(isHighlighted ? UiTheme.Selection : UiTheme.Surface);
+            var backgroundColor = isHighlighted
+                ? UiTheme.Selection
+                : IsRowTagged(e.RowIndex) ? RowTagBackColor : UiTheme.Surface;
+            using var backgroundBrush = new SolidBrush(backgroundColor);
             e.Graphics.FillRectangle(backgroundBrush, e.CellBounds);
             e.Paint(e.ClipBounds, DataGridViewPaintParts.Border);
 
@@ -423,13 +446,13 @@ public sealed class MainForm : Form
             var foreColor = isHighlighted ? UiTheme.Text : UiTheme.MutedText;
             if (IsRowTagged(e.RowIndex))
             {
-                using var tagBrush = new SolidBrush(RowTagColor);
-                var tagBounds = new Rectangle(
+                using var markerBrush = new SolidBrush(RowTagMarkerColor);
+                var markerBounds = new Rectangle(
                     e.CellBounds.Left + 3,
                     e.CellBounds.Top + 4,
                     4,
                     Math.Max(1, e.CellBounds.Height - 8));
-                e.Graphics.FillRectangle(tagBrush, tagBounds);
+                e.Graphics.FillRectangle(markerBrush, markerBounds);
             }
 
             TextRenderer.DrawText(
@@ -455,6 +478,29 @@ public sealed class MainForm : Form
                 e.ClipBounds,
                 DataGridViewPaintParts.Border | DataGridViewPaintParts.ContentForeground);
             e.Handled = true;
+        }
+    }
+
+    private void GridOnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0)
+        {
+            return;
+        }
+
+        // 搜索命中使用单元格自己的高亮色；其余单元格再按单元格标签、行标签着色。
+        if (grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Style.BackColor != Color.Empty)
+        {
+            return;
+        }
+
+        if (IsCellTagged(e.RowIndex, e.ColumnIndex))
+        {
+            e.CellStyle.BackColor = CellTagBackColor;
+        }
+        else if (IsRowTagged(e.RowIndex))
+        {
+            e.CellStyle.BackColor = RowTagBackColor;
         }
     }
 
@@ -580,6 +626,7 @@ public sealed class MainForm : Form
         }
 
         RefreshSearchIfActive();
+        UpdateConditionButtons();
     }
 
     private void EnsureSortableHeaderMinimumWidth(DataGridViewColumn column)
@@ -665,7 +712,33 @@ public sealed class MainForm : Form
         activeFilter = filter;
         CommitGridInputAndClearSelection();
         RefreshSearchIfActive();
+        UpdateConditionButtons();
         UpdateFilterStatus(table);
+    }
+
+    private void ClearAllConditions()
+    {
+        if (isLoading || grid.DataSource is not DataTable table)
+        {
+            return;
+        }
+
+        grid.EndEdit();
+        activeFilter = null;
+        sortKeys.Clear();
+        table.DefaultView.RowFilter = string.Empty;
+        table.DefaultView.Sort = string.Empty;
+
+        foreach (DataGridViewColumn column in grid.Columns)
+        {
+            column.HeaderCell.SortGlyphDirection = SortOrder.None;
+        }
+
+        ClearAllTags(showStatus: false);
+        CommitGridInputAndClearSelection();
+        RefreshSearchIfActive();
+        UpdateConditionButtons();
+        SetStatus($"Cleared filter, sort, and tags — {table.Rows.Count} rows");
     }
 
     private void UpdateFilterStatus(DataTable table)
@@ -694,9 +767,9 @@ public sealed class MainForm : Form
         var emptyTable = new DataTable();
         grid.SuspendLayout();
         grid.DataSource = emptyTable;
-        ClearAllTags(showStatus: false);
         sortKeys.Clear();
         activeFilter = null;
+        ClearAllTags(showStatus: false);
         multiSortButton.Enabled = false;
         searchButton.Enabled = false;
         filterButton.Enabled = false;
@@ -917,7 +990,16 @@ public sealed class MainForm : Form
         multiSortButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
         searchButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
         filterButton.Enabled = !isLoading && grid.DataSource is DataTable && !IsClipboardView;
-        clearTagsButton.Enabled = !isLoading && taggedRows.Count > 0;
+        UpdateConditionButtons();
+    }
+
+    private void UpdateConditionButtons()
+    {
+        var hasTags = taggedRows.Count > 0 || taggedCells.Count > 0;
+        clearTagsButton.Enabled = !isLoading && hasTags;
+        clearConditionsButton.Enabled = !isLoading
+            && grid.DataSource is DataTable
+            && (hasTags || sortKeys.Count > 0 || activeFilter is not null);
     }
 
     private void SetLoadProgress(string text)
@@ -1158,6 +1240,20 @@ public sealed class MainForm : Form
         }
     }
 
+    private void GridOnAltCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0)
+        {
+            return;
+        }
+
+        CommitFileRename();
+        grid.EndEdit();
+        ToggleCellTag(e.RowIndex, e.ColumnIndex);
+        contextColumnIndex = -1;
+        contextRowIndex = -1;
+    }
+
     private void GridOnRowHeaderMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
     {
         if (e.RowIndex < 0 || (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right))
@@ -1261,6 +1357,11 @@ public sealed class MainForm : Form
         return GetBoundDataRow(rowIndex) is { } row && taggedRows.Contains(row);
     }
 
+    private bool IsCellTagged(int rowIndex, int columnIndex)
+    {
+        return GetBoundDataCell(rowIndex, columnIndex) is { } cell && taggedCells.Contains(cell);
+    }
+
     private DataRow? GetBoundDataRow(int rowIndex)
     {
         if (rowIndex < 0 || rowIndex >= grid.Rows.Count)
@@ -1269,6 +1370,23 @@ public sealed class MainForm : Form
         }
 
         return grid.Rows[rowIndex].DataBoundItem is DataRowView rowView ? rowView.Row : null;
+    }
+
+    private (DataRow Row, DataColumn Column)? GetBoundDataCell(int rowIndex, int columnIndex)
+    {
+        var row = GetBoundDataRow(rowIndex);
+        if (row is null || columnIndex < 0 || columnIndex >= grid.Columns.Count)
+        {
+            return null;
+        }
+
+        var columnName = grid.Columns[columnIndex].DataPropertyName;
+        if (string.IsNullOrEmpty(columnName) || row.Table.Columns[columnName] is not { } column)
+        {
+            return null;
+        }
+
+        return (row, column);
     }
 
     private void ToggleRowTag(int rowIndex)
@@ -1283,25 +1401,54 @@ public sealed class MainForm : Form
         if (!isTagged)
         {
             taggedRows.Remove(row);
+            taggedCells.RemoveWhere(cell => ReferenceEquals(cell.Row, row));
         }
 
-        clearTagsButton.Enabled = !isLoading && taggedRows.Count > 0;
+        UpdateConditionButtons();
         grid.InvalidateRow(rowIndex);
         SetStatus(isTagged
             ? $"Tagged row {rowIndex + 1} — {taggedRows.Count} tag(s)"
             : $"Removed tag from row {rowIndex + 1} — {taggedRows.Count} tag(s)");
     }
 
+    private void ToggleCellTag(int rowIndex, int columnIndex)
+    {
+        if (GetBoundDataCell(rowIndex, columnIndex) is not { } cell)
+        {
+            return;
+        }
+
+        var isTagged = taggedCells.Add(cell);
+        if (isTagged)
+        {
+            taggedRows.Add(cell.Row);
+        }
+        else
+        {
+            taggedCells.Remove(cell);
+        }
+
+        UpdateConditionButtons();
+        grid.InvalidateRow(rowIndex);
+        SetStatus(isTagged
+            ? $"Tagged cell {cell.Column.ColumnName}, row {rowIndex + 1} — row tagged automatically"
+            : $"Removed cell tag {cell.Column.ColumnName}, row {rowIndex + 1} — row tag retained");
+    }
+
     private void ClearAllTags(bool showStatus = true)
     {
         var clearedCount = taggedRows.Count;
+        var clearedCellCount = taggedCells.Count;
         taggedRows.Clear();
-        clearTagsButton.Enabled = false;
+        taggedCells.Clear();
+        UpdateConditionButtons();
         grid.Invalidate();
 
         if (showStatus && clearedCount > 0)
         {
-            SetStatus($"Cleared {clearedCount} tag(s)");
+            SetStatus(clearedCellCount == 0
+                ? $"Cleared {clearedCount} tag(s)"
+                : $"Cleared {clearedCount} row tag(s) and {clearedCellCount} cell tag(s)");
         }
     }
 
