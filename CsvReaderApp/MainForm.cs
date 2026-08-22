@@ -12,6 +12,7 @@ public sealed class MainForm : Form
     private static readonly Color RowTagColor = Color.FromArgb(245, 154, 35);
     private const int SortGlyphReservedHeaderWidth = 30;
     private const int MinimumSortableHeaderWidth = 56;
+    private const int FirstRowCellHorizontalPadding = 16;
     private const int GridHorizontalPadding = 8;
 
     private readonly Button openButton = new();
@@ -198,7 +199,7 @@ public sealed class MainForm : Form
         grid.AllowUserToDeleteRows = false;
         grid.AllowUserToResizeRows = false;
         // 关闭自动尺寸：AllCells 会在每次行变化时全表重算尺寸，导致逐行可见的填充/排序。
-        // 列宽改为固定起点（表头宽度 + 排序箭头，见 EnsureSortableHeaderWidth）+ 用户可拖动；行高固定。
+        // 打开文件时只按第一行数据设置初始列宽（同时保证表头和排序箭头可见），之后仍可手动拖动。
         grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
         // 双缓冲：绘制一次性完成，不再逐行可见。
@@ -394,7 +395,7 @@ public sealed class MainForm : Form
         {
             column.AutoSizeMode = DataGridViewAutoSizeColumnMode.NotSet;
             column.SortMode = DataGridViewColumnSortMode.Programmatic;
-            EnsureSortableHeaderWidth(column);
+            EnsureSortableHeaderMinimumWidth(column);
         }
         FillTrailingColumn();
 
@@ -581,7 +582,7 @@ public sealed class MainForm : Form
         RefreshSearchIfActive();
     }
 
-    private void EnsureSortableHeaderWidth(DataGridViewColumn column)
+    private void EnsureSortableHeaderMinimumWidth(DataGridViewColumn column)
     {
         var headerFont = grid.ColumnHeadersDefaultCellStyle.Font ?? grid.Font;
         var headerText = string.IsNullOrEmpty(column.HeaderText) ? " " : column.HeaderText;
@@ -589,8 +590,25 @@ public sealed class MainForm : Form
         // MinimumWidth 保证拖动时不会窄到放不下表头 + 排序箭头。
         var minimum = Math.Max(MinimumSortableHeaderWidth, textWidth + SortGlyphReservedHeaderWidth);
         column.MinimumWidth = Math.Max(column.MinimumWidth, minimum);
-        // 初始列宽 = 表头 + 箭头（AutoSize=None 下的固定起点）；用户可拖动调整。
-        column.Width = Math.Max(column.MinimumWidth, textWidth + SortGlyphReservedHeaderWidth);
+    }
+
+    private void ApplyInitialColumnWidths(DataTable table)
+    {
+        var firstRow = table.Rows.Count > 0 ? table.Rows[0] : null;
+        var cellFont = grid.DefaultCellStyle.Font ?? grid.Font;
+
+        for (var i = 0; i < grid.Columns.Count && i < table.Columns.Count; i++)
+        {
+            var column = grid.Columns[i];
+            column.AutoSizeMode = DataGridViewAutoSizeColumnMode.NotSet;
+            EnsureSortableHeaderMinimumWidth(column);
+
+            var value = firstRow is null ? string.Empty : Convert.ToString(firstRow[i]) ?? string.Empty;
+            var firstRowWidth = TextRenderer.MeasureText(value, cellFont).Width + FirstRowCellHorizontalPadding;
+            column.Width = Math.Max(column.MinimumWidth, firstRowWidth);
+        }
+
+        FillTrailingColumn();
     }
 
     private void OpenMultiSortDialog()
@@ -859,6 +877,7 @@ public sealed class MainForm : Form
 
             grid.SuspendLayout();
             grid.DataSource = table;
+            ApplyInitialColumnWidths(table);
             ClearAllTags(showStatus: false);
             sortKeys.Clear();
             activeFilter = null;
