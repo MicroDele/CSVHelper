@@ -9,7 +9,7 @@ This repository contains a small .NET Windows Forms CSV viewer/editor. The sourc
 - `CsvDocument.cs` contains CSV parse and serialization logic.
 - `Assets/` stores the application icon.
 
-Build outputs are under `bin/`, `obj/`, and published `dist/`; do not edit generated files directly.
+Build outputs are under `bin/`, `obj/`, the intermediate `publish/`, and installers under `Releases/`; do not edit generated files directly.
 
 ## Build, Test, and Development Commands
 
@@ -17,11 +17,12 @@ Run commands from the repository root:
 
 ```powershell
 dotnet build .\CsvReaderApp\CsvReaderApp.csproj -c Release
-dotnet publish .\CsvReaderApp\CsvReaderApp.csproj -c Release -o .\dist
+.\deploy.ps1           # build installers locally -> Releases\ (Setup.exe + .msi)
+.\deploy.ps1 -Upload   # publish to GitHub Releases (Velopack auto-update source)
 dotnet .\CsvReaderApp\bin\Release\net10.0-windows\CSVHelper.dll --inspect sample.csv
 ```
 
-Use the first command for compile verification, the second to update the runnable `dist\CSVHelper.exe`, and `--inspect` for quick parser smoke checks without opening the UI. If `dist\CSVHelper.exe` is running during publish, close or terminate it before retrying.
+Use the first command for compile verification, `deploy.ps1` to build installers locally (output in `Releases\`), and `-Upload` to publish a release to GitHub (the Velopack auto-update source). The version is read from `<Version>` in `CsvReaderApp.csproj`. `--inspect` runs a quick parser smoke check without opening the UI. If an installer is running during a republish, close or terminate it before retrying.
 
 ## Coding Style & Naming Conventions
 
