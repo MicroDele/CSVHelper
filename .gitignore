@@ -36,3 +36,6 @@ Releases/
 
 # WorkBuddy memory + logs (per-machine, not source-controlled)
 .workbuddy/
+
+# Claude Code local settings
+.claude/
