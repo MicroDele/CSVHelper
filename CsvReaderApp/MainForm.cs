@@ -1,4 +1,5 @@
 using System.Data;
+using System.Reflection;
 using System.Text;
 
 namespace CsvReaderApp;
@@ -29,6 +30,7 @@ public sealed class MainForm : Form
     private readonly CsvDataGridView grid = new();
     private readonly StatusStrip statusStrip = new();
     private readonly ToolStripStatusLabel statusLabel = new();
+    private readonly ToolStripStatusLabel versionLabel = new();
     private readonly ToolTip toolTip = new();
     private readonly ContextMenuStrip gridMenu = new();
     private readonly ToolStripMenuItem copyItem = new("Copy");
@@ -210,6 +212,12 @@ public sealed class MainForm : Form
         statusStrip.Items.Add(statusLabel);
         statusLabel.ForeColor = UiTheme.MutedText;
         statusLabel.Text = "Ready";
+        statusStrip.Items.Add(versionLabel);
+        versionLabel.Spring = true;
+        versionLabel.TextAlign = ContentAlignment.MiddleRight;
+        versionLabel.BorderSides = ToolStripStatusLabelBorderSides.None;
+        versionLabel.ForeColor = UiTheme.MutedText;
+        versionLabel.Text = $"v{GetAppVersion()}";
 
         grid.Dock = DockStyle.Fill;
         grid.Margin = new Padding(GridHorizontalPadding, 0, GridHorizontalPadding, 0);
@@ -1612,6 +1620,20 @@ public sealed class MainForm : Form
     private void SetStatus(string text)
     {
         statusLabel.Text = text;
+    }
+
+    private static string GetAppVersion()
+    {
+        var assembly = typeof(MainForm).Assembly;
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            // 形如 "1.0.0+commithash"，去掉构建元数据只保留版本号。
+            return informationalVersion.Split('+')[0];
+        }
+
+        return assembly.GetName().Version?.ToString(3) ?? "unknown";
     }
 
     private void MarkDirty()
