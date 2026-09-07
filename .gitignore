@@ -22,3 +22,17 @@
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Secrets / local environment
+.env
+.env.*
+!.env.example
+
+# Velopack intermediate output
+publish/
+
+# Velopack release artifacts (built locally by deploy.ps1; uploaded to GitHub Releases, not committed)
+Releases/
+
+# WorkBuddy memory + logs (per-machine, not source-controlled)
+.workbuddy/
