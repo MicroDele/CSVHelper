@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.Win32;
 using Velopack;
 
@@ -15,10 +16,14 @@ static class Program
     static void Main(string[] args)
     {
         // Velopack 更新钩子：处理安装/更新时由更新器传入的参数，普通启动无副作用。
-        // 安装后注册 .csv 文件关联，卸载前清理。
+        // 安装后注册 .csv 文件关联，卸载前清理并询问是否删除用户数据。
         VelopackApp.Build()
             .OnAfterInstallFastCallback(_ => RegisterCsvFileAssociation())
-            .OnBeforeUninstallFastCallback(_ => UnregisterCsvFileAssociation())
+            .OnBeforeUninstallFastCallback(_ =>
+            {
+                UnregisterCsvFileAssociation();
+                PromptDeleteUserData();
+            })
             .Run();
 
         if (args.Length >= 2 && args[0] == "--inspect")
@@ -56,20 +61,43 @@ static class Program
                 return;
             }
 
-            var result = MessageBox.Show(
-                owner,
-                $"发现新版本 {update.TargetFullRelease.Version}，是否立即更新？",
-                "CSVHelper 更新",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Information);
-
-            if (result != DialogResult.Yes)
+            var newVersion = update.TargetFullRelease.Version.ToString();
+            var settings = AppSettings.Load();
+            // 用户忽略了该版本：不再提示，直到更高版本发布
+            if (settings.IgnoredUpdateVersion == newVersion)
             {
                 return;
             }
 
-            await mgr.DownloadUpdatesAsync(update);
-            mgr.ApplyUpdatesAndRestart(update.TargetFullRelease);
+            using var prompt = new UpdatePromptDialog(newVersion);
+            if (prompt.ShowDialog(owner) != DialogResult.OK)
+            {
+                if (prompt.IgnoreVersion)
+                {
+                    settings = settings with { IgnoredUpdateVersion = newVersion };
+                    settings.Save();
+                }
+
+                return;
+            }
+
+            // 立即更新：隐藏主窗 + 置顶进度窗；完成后自动退出并启动新版。
+            // 下载失败则恢复主窗，用户现场不丢。
+            owner.Hide();
+            using var progressForm = new UpdateProgressForm(newVersion);
+            progressForm.Show();
+            try
+            {
+                await mgr.DownloadUpdatesAsync(update, progressForm.Report);
+                mgr.ApplyUpdatesAndRestart(update.TargetFullRelease);
+            }
+            catch
+            {
+                progressForm.Close();
+                owner.Show();
+                MessageBox.Show(owner, "更新下载失败，请稍后重启应用重试。", "CSVHelper 更新",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
         catch
         {
@@ -115,6 +143,51 @@ static class Program
             // 注册失败不影响程序正常运行
         }
     }
+
+    /// <summary>
+    /// 卸载前询问是否删除用户数据（%APPDATA%\CSVHelper：预设等）。
+    /// 默认"否"（回车直接保留）；静默卸载（非交互会话）时跳过询问直接保留。
+    /// </summary>
+    private static void PromptDeleteUserData()
+    {
+        try
+        {
+            if (!Environment.UserInteractive)
+            {
+                return;
+            }
+
+            // Win32 MessageBox + MB_TOPMOST/MB_SETFOREGROUND：
+            // 卸载进度窗口不归本进程所有，无法作为 owner，
+            // .NET MessageBoxOptions 又没有置顶选项——不用 TOPMOST 会被卸载界面遮挡。
+            const uint MB_YESNO = 0x00000004;
+            const uint MB_ICONQUESTION = 0x00000020;
+            const uint MB_DEFBUTTON2 = 0x00000100;
+            const uint MB_SETFOREGROUND = 0x00010000;
+            const uint MB_TOPMOST = 0x00040000;
+            const int IDYES = 6;
+
+            var choice = NativeMessageBox(IntPtr.Zero, "是否同时删除用户数据？", "CSVHelper 卸载",
+                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST);
+            if (choice != IDYES)
+            {
+                return;
+            }
+
+            if (Directory.Exists(HeaderPresetStore.UserDataDirectory))
+            {
+                Directory.Delete(HeaderPresetStore.UserDataDirectory, recursive: true);
+            }
+        }
+        catch
+        {
+            // 清理失败不影响卸载
+        }
+    }
+
+    // 命名避开 WinForms 的 MessageBox 类：同类内标识符会遮蔽它
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
+    private static extern int NativeMessageBox(IntPtr hWnd, string text, string caption, uint type);
 
     /// <summary>
     /// 卸载前清理 .csv 文件关联。
