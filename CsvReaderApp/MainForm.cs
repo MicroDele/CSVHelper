@@ -64,8 +64,7 @@ public sealed class MainForm : Form
     private readonly HashSet<(DataRow Row, DataColumn Column)> taggedCells = new();
     private StringFilter? activeFilter;
 
-    private readonly ToolStripMenuItem editHeadersItem = new("Edit Headers...");
-    private readonly ToolStripMenuItem editDataItem = new("Edit Data...");
+    private readonly ToolStripMenuItem editTableItem = new("Edit Table...");
 
     public MainForm(string? initialPath)
     {
@@ -279,8 +278,7 @@ public sealed class MainForm : Form
             }
         };
 
-        gridMenu.Items.Add(editHeadersItem);
-        gridMenu.Items.Add(editDataItem);
+        gridMenu.Items.Add(editTableItem);
         gridMenu.Items.Add(new ToolStripSeparator());
         gridMenu.Items.Add(copyItem);
         gridMenu.Items.Add(copyHeaderItem);
@@ -294,15 +292,13 @@ public sealed class MainForm : Form
                 && grid.Rows[contextRowIndex].Selected;
             var isCell = contextRowIndex >= 0 && contextColumnIndex >= 0 && !isSelectedRow;
 
-            editHeadersItem.Visible = isClipboardView;
-            editDataItem.Visible = isClipboardView;
+            editTableItem.Visible = isClipboardView;
             copyItem.Visible = isCell || isSelectedRow;
             copyHeaderItem.Visible = isColumnHeader;
             copyRowsAsCsvItem.Visible = isSelectedRow;
             e.Cancel = !isClipboardView && !isCell && !isColumnHeader && !isSelectedRow;
         };
-        editHeadersItem.Click += (_, _) => EditHeadersIntoGrid();
-        editDataItem.Click += (_, _) => EditDataIntoGrid();
+        editTableItem.Click += (_, _) => EditTableIntoGrid();
         copyItem.Click += (_, _) => CopySelection();
         copyHeaderItem.Click += (_, _) => CopySelectedHeader();
         copyRowsAsCsvItem.Click += (_, _) => CopySelectedRowsAsCsv();
@@ -794,13 +790,15 @@ public sealed class MainForm : Form
         {
             dialog.ClearInput();
         }
-        SetStatus("Empty view — right-click to edit headers or data");
+        SetStatus("Empty view — right-click to edit the table");
     }
 
     /// <summary>
-    /// 右键菜单：编辑表头。打开时回填已有表头，应用时替换表头并保留数据行。
+    /// 右键菜单：编辑表格。表头与数据在同一对话框回填/编辑，应用时整体替换。
+    /// 列数规则：表头决定列数；无表头时按数据列数生成 "Column N"；数据比表头宽时自动补列
+    /// （三种组合统一由 CsvDocument.CreateTable 处理）。
     /// </summary>
-    private void EditHeadersIntoGrid()
+    private void EditTableIntoGrid()
     {
         if (grid.DataSource is not DataTable table)
         {
@@ -808,47 +806,8 @@ public sealed class MainForm : Form
         }
 
         var currentHeaders = string.Join(", ", table.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
-        using var dialog = new EditHeadersDialog(currentHeaders);
-        if (dialog.ShowDialog(this) != DialogResult.OK)
-        {
-            return;
-        }
-
-        try
-        {
-            var headers = dialog.ParsedHeaders;
-            // 保留已有数据行（按列索引对齐到新表头），表头决定最终列数。
-            var existingRows = ExtractRows(table);
-            var newTable = CsvDocument.CreateTableFixedColumns(headers, existingRows);
-            grid.DataSource = newTable;
-            ClearAllTags(showStatus: false);
-            multiSortButton.Enabled = true;
-            searchButton.Enabled = true;
-            filterButton.Enabled = true;
-            SetStatus(existingRows.Count == 0
-                ? $"Empty table — {headers.Length} columns. Right-click again to paste data."
-                : $"Applied {headers.Length} headers to {existingRows.Count} row(s)");
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, ex.Message, "Paste failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-
-    /// <summary>
-    /// 右键菜单：编辑 CSV 数据。打开时回填已有行，编辑框内容全部为数据行（不抽表头），
-    /// 应用时整体替换为编辑框解析结果。
-    /// 表头规则：已有表头则沿用（数据更宽时追加 "Column N"）；否则按列数生成空表头。
-    /// </summary>
-    private void EditDataIntoGrid()
-    {
-        if (grid.DataSource is not DataTable table)
-        {
-            return;
-        }
-
         var currentData = CsvDocument.RowsToCsvText(ExtractRows(table));
-        using var dialog = new EditDataDialog(currentData);
+        using var dialog = new EditTableDialog(currentHeaders, currentData);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -856,42 +815,20 @@ public sealed class MainForm : Form
 
         try
         {
-            var dataRows = dialog.ParsedRows;
-            if (dataRows.Count == 0)
-            {
-                return;
-            }
-
-            var dataColumnCount = dataRows.Max(row => row.Length);
-            var headers = ResolveHeaders(table, dataColumnCount);
-            var newTable = CsvDocument.CreateTable(headers, dataRows);
+            var newTable = CsvDocument.CreateTable(dialog.Headers, dialog.Rows);
             grid.DataSource = newTable;
             ClearAllTags(showStatus: false);
             multiSortButton.Enabled = true;
             searchButton.Enabled = true;
             filterButton.Enabled = true;
-            SetStatus($"Loaded {dataRows.Count} rows, {headers.Length} columns");
+            SetStatus(dialog.Rows.Count == 0
+                ? $"Empty table — {newTable.Columns.Count} columns. Right-click to edit the table."
+                : $"Loaded {dialog.Rows.Count} rows, {newTable.Columns.Count} columns");
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Paste failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, ex.Message, "Edit table failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-    }
-
-    /// <summary>
-    /// 推导粘贴数据所需的表头：沿用已有表头，不足部分补 "Column N"；无表头则全部生成。
-    /// </summary>
-    private static string[] ResolveHeaders(DataTable table, int dataColumnCount)
-    {
-        var existing = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
-        var length = Math.Max(existing.Count, dataColumnCount);
-        var headers = new string[length];
-        for (var i = 0; i < length; i++)
-        {
-            headers[i] = i < existing.Count ? existing[i] : $"Column {i + 1}";
-        }
-
-        return headers;
     }
 
     /// <summary>

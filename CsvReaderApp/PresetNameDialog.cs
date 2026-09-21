@@ -1,9 +1,9 @@
 namespace CsvReaderApp;
 
 /// <summary>
-/// 编辑表头（列名）的小对话框，逗号分隔。打开时回填已有表头。
+/// 保存预设时输入名称的小对话框。可预填已有名称（保存即覆盖同名预设）。
 /// </summary>
-internal sealed class EditHeadersDialog : Form
+internal sealed class PresetNameDialog : Form
 {
     private readonly Label label = new();
     private readonly TextBox box = new();
@@ -11,10 +11,10 @@ internal sealed class EditHeadersDialog : Form
     private readonly Button cancelButton = new();
     private readonly ToolTip toolTip = new();
 
-    /// <param name="currentHeaders">已有表头（逗号拼接后的文本），用于回填；无则传空。</param>
-    public EditHeadersDialog(string currentHeaders = "")
+    /// <param name="initialName">预填名称（覆盖已有预设时传入其名）；无则传空。</param>
+    public PresetNameDialog(string initialName = "")
     {
-        Text = "Edit Headers";
+        Text = "Save Preset";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -24,7 +24,7 @@ internal sealed class EditHeadersDialog : Form
         UiTheme.ApplyForm(this);
 
         BuildUi();
-        box.Text = currentHeaders;
+        box.Text = initialName;
 
         KeyDown += (_, e) =>
         {
@@ -37,11 +37,12 @@ internal sealed class EditHeadersDialog : Form
         };
     }
 
-    public string[] ParsedHeaders { get; private set; } = [];
+    /// <summary>用户输入的预设名（未 trim，由调用方决定处理方式）。</summary>
+    public string PresetName => box.Text;
 
     private void BuildUi()
     {
-        label.Text = "Column names (comma-separated):";
+        label.Text = "Preset name:";
         label.SetBounds(16, 14, 388, 20);
         label.ForeColor = UiTheme.Text;
         label.TextAlign = ContentAlignment.MiddleLeft;
@@ -53,9 +54,16 @@ internal sealed class EditHeadersDialog : Form
         box.ForeColor = UiTheme.Text;
         box.Font = new Font("Consolas", 9.5F);
 
-        UiTheme.ApplyIconButton(okButton, toolTip, UiIconKind.Ok, "Apply headers", primary: true);
+        UiTheme.ApplyIconButton(okButton, toolTip, UiIconKind.Ok, "Save preset", primary: true);
         okButton.SetBounds(320, 74, 40, 30);
-        okButton.Click += (_, _) => Apply();
+        okButton.Click += (_, _) =>
+        {
+            if (box.Text.Trim().Length > 0)
+            {
+                DialogResult = DialogResult.OK;
+                Close();
+            }
+        };
 
         UiTheme.ApplyIconButton(cancelButton, toolTip, UiIconKind.Cancel, "Cancel");
         cancelButton.SetBounds(364, 74, 40, 30);
@@ -70,25 +78,5 @@ internal sealed class EditHeadersDialog : Form
         Controls.Add(box);
         Controls.Add(okButton);
         Controls.Add(cancelButton);
-    }
-
-    private void Apply()
-    {
-        var raw = box.Text.Trim();
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return;
-        }
-
-        ParsedHeaders = raw.Split(',')
-            .Select(h => h.Trim())
-            .Where(h => h.Length > 0)
-            .ToArray();
-
-        if (ParsedHeaders.Length > 0)
-        {
-            DialogResult = DialogResult.OK;
-            Close();
-        }
     }
 }
