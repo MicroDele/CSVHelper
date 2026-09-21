@@ -4,9 +4,12 @@
 
 This repository contains a small .NET Windows Forms CSV viewer/editor. The source tree is `CsvReaderApp/`:
 
-- `Program.cs` starts the WinForms app and supports `--inspect <csv> [output]` for lightweight parsing checks.
+- `Program.cs` starts the WinForms app, wires Velopack install/uninstall hooks and the in-app update check, and supports `--inspect <csv> [output]` for lightweight parsing checks.
 - `MainForm.cs` owns the UI, file open/save flow, grid behavior, and context menu actions.
 - `CsvDocument.cs` contains CSV parse and serialization logic.
+- `EditTableDialog.cs` is the clipboard-view table editor (headers + data in one dialog, with header presets).
+- `HeaderPresetStore.cs` persists user header presets; `AppSettings.cs` holds app-level user settings (e.g. ignored update version). Both live under `%APPDATA%\CSVHelper` — the whole directory is deleted only when the user opts in via the uninstall prompt.
+- `UpdatePromptDialog.cs` / `UpdateProgressForm.cs` implement the update prompt (with per-version "ignore") and the download progress window.
 - `Assets/` stores the application icon.
 
 Build outputs are under `bin/`, `obj/`, the intermediate `publish/`, and installers under `Releases/`; do not edit generated files directly.
@@ -30,7 +33,7 @@ Use C# with nullable reference types and implicit usings enabled. Keep four-spac
 
 ## Testing Guidelines
 
-No dedicated test project currently exists. For parser changes, add or use `--inspect` scenarios with representative CSV files, including quoted fields, embedded commas, CRLF line endings, and empty data. For UI changes, build the app and manually verify the affected workflow in the WinForms app.
+Behavioral tests are PowerShell scripts in `tests/` that reflect over the Release build output (build first, then run, e.g. `pwsh -NoProfile -File .\tests\HeaderPresetStore.Tests.ps1`). Add one when introducing pure-logic classes. For parser changes, also use `--inspect` scenarios with representative CSV files, including quoted fields, embedded commas, CRLF line endings, and empty data. For UI changes, build the app and manually verify the affected workflow in the WinForms app.
 
 ## Commit & Pull Request Guidelines
 
