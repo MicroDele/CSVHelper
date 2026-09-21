@@ -93,6 +93,30 @@ if ($Upload) {
     Write-Host 'Uploading to GitHub Releases...'
     vpk upload github -o $releaseDir --repoUrl $RepoUrl --token $Token --publish
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # vpk 的安装包/便携包文件名是固定约定（无版本号），上传后用 API 重命名带版本。
+    # 仅改 release 页面展示名；自动更新只依赖 releases.win.json + nupkg，不受影响。
+    $apiBase = $RepoUrl -replace '^https://github\.com/', 'https://api.github.com/repos/'
+    try {
+        $apiHeaders = @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json' }
+        $release = Invoke-RestMethod -Uri "$apiBase/releases/tags/$Version" -Headers $apiHeaders
+        $renames = @{
+            'CSVHelper-win-Setup.exe'    = "CSVHelper-$Version-Setup.exe"
+            'CSVHelper-win.msi'          = "CSVHelper-$Version-win.msi"
+            'CSVHelper-win-Portable.zip' = "CSVHelper-$Version-Portable.zip"
+        }
+        foreach ($asset in $release.assets) {
+            if ($renames.ContainsKey($asset.name)) {
+                $body = @{ name = $renames[$asset.name] } | ConvertTo-Json
+                Invoke-RestMethod -Method Patch -Uri "$apiBase/releases/assets/$($asset.id)" `
+                    -Headers $apiHeaders -Body $body -ContentType 'application/json' | Out-Null
+                Write-Host "Renamed asset: $($asset.name) -> $($renames[$asset.name])"
+            }
+        }
+    }
+    catch {
+        Write-Warning "Asset rename failed (non-fatal): $($_.Exception.Message)"
+    }
 }
 
 if ($Upload) {
