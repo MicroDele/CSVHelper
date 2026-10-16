@@ -68,7 +68,7 @@ static class Program
                 return;
             }
 
-            using var prompt = new UpdatePromptDialog(newVersion);
+            using var prompt = new UpdatePromptDialog(newVersion, update.TargetFullRelease.NotesMarkdown);
             if (prompt.ShowDialog(owner) != DialogResult.OK)
             {
                 if (prompt.IgnoreVersion)

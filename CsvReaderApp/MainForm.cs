@@ -1566,7 +1566,7 @@ public sealed class MainForm : Form
 
     private void SetEncodingDisplay(string? encodingName)
     {
-        encodingLabel.Text = encodingName ?? "—";
+        encodingLabel.Text = encodingName ?? "视图模式";
     }
 
     private void SetStatus(string text)

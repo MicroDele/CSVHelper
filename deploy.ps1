@@ -4,6 +4,7 @@ param(
     [string]$Token = "",
     [string]$Runtime = "win-x64",
     [string]$Configuration = "Release",
+    [string]$ReleaseNotes = "",
     # MSI by default: standard Windows Installer package, much lower false-positive
     # rate than Setup.exe. Use -Msi:$false to fall back to the one-click installer.
     [bool]$Msi = $true,
@@ -44,6 +45,19 @@ if (-not $Version) {
 
 Write-Host "Version: $Version"
 
+# Use one versioned Markdown file for the in-app update feed and GitHub release page.
+if (-not $ReleaseNotes) {
+    $ReleaseNotes = Join-Path $PSScriptRoot "release-notes\$Version.md"
+}
+if (-not (Test-Path -LiteralPath $ReleaseNotes -PathType Leaf)) {
+    throw "Release notes not found: $ReleaseNotes. Add release-notes/$Version.md or pass -ReleaseNotes."
+}
+$ReleaseNotes = (Resolve-Path -LiteralPath $ReleaseNotes).Path
+$releaseNotesText = [System.IO.File]::ReadAllText($ReleaseNotes)
+if ([string]::IsNullOrWhiteSpace($releaseNotesText)) {
+    throw "Release notes must not be empty: $ReleaseNotes"
+}
+
 # 1. Publish. Framework-dependent by default (fast, no runtime download);
 #    pass -SelfContained to bundle the .NET runtime (target machine needs no .NET installed).
 Write-Host 'Publishing...'
@@ -61,6 +75,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 #    has a much lower SmartScreen / AV false-positive rate than the 7z-SFX Setup.exe.
 Write-Host 'Packing...'
 $packArgs = @('pack', '-u', 'CSVHelper', '-v', $Version, '-p', $publishDir, '-o', $releaseDir, '-r', $Runtime, '--mainExe', 'CSVHelper.exe', '--framework', 'net10.0-x64-desktop')
+$packArgs += @('--releaseNotes', $ReleaseNotes)
 if ($Msi) {
     $packArgs += '--msi'
     # PerUser install keeps it under %LocalAppData% (no admin needed), matching
@@ -100,6 +115,9 @@ if ($Upload) {
     try {
         $apiHeaders = @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json' }
         $release = Invoke-RestMethod -Uri "$apiBase/releases/tags/$Version" -Headers $apiHeaders
+        $releaseBody = @{ body = $releaseNotesText } | ConvertTo-Json
+        Invoke-RestMethod -Method Patch -Uri "$apiBase/releases/$($release.id)" `
+            -Headers $apiHeaders -Body $releaseBody -ContentType 'application/json; charset=utf-8' | Out-Null
         $renames = @{
             'CSVHelper-win-Setup.exe'    = "CSVHelper-$Version-Setup.exe"
             'CSVHelper-win.msi'          = "CSVHelper-$Version-win.msi"
@@ -115,7 +133,7 @@ if ($Upload) {
         }
     }
     catch {
-        Write-Warning "Asset rename failed (non-fatal): $($_.Exception.Message)"
+        Write-Warning "Release metadata update failed (non-fatal): $($_.Exception.Message)"
     }
 }
 

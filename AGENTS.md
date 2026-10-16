@@ -10,6 +10,7 @@ This repository contains a small .NET Windows Forms CSV viewer/editor. The sourc
 - `EditTableDialog.cs` is the clipboard-view table editor (headers + data in one dialog, with header presets).
 - `HeaderPresetStore.cs` persists user header presets; `AppSettings.cs` holds app-level user settings (e.g. ignored update version). Both live under `%APPDATA%\CSVHelper` — the whole directory is deleted only when the user opts in via the uninstall prompt.
 - `UpdatePromptDialog.cs` / `UpdateProgressForm.cs` implement the update prompt (with per-version "ignore") and the download progress window.
+- `release-notes/<Version>.md` holds the Markdown changelog embedded in update packages and shown in the update prompt; `deploy.ps1` also uses it for the GitHub Release description.
 - `Assets/` stores the application icon.
 
 Build outputs are under `bin/`, `obj/`, the intermediate `publish/`, and installers under `Releases/`; do not edit generated files directly.
@@ -25,7 +26,7 @@ dotnet build .\CsvReaderApp\CsvReaderApp.csproj -c Release
 dotnet .\CsvReaderApp\bin\Release\net10.0-windows\CSVHelper.dll --inspect sample.csv
 ```
 
-Use the first command for compile verification, `deploy.ps1` to build installers locally (output in `Releases\`), and `-Upload` to publish a release to GitHub (the Velopack auto-update source). The version is read from `<Version>` in `CsvReaderApp.csproj`. `--inspect` runs a quick parser smoke check without opening the UI. If an installer is running during a republish, close or terminate it before retrying.
+Use the first command for compile verification, `deploy.ps1` to build installers locally (output in `Releases\`), and `-Upload` to publish a release to GitHub (the Velopack auto-update source). The version is read from `<Version>` in `CsvReaderApp.csproj`. Add a nonempty `release-notes/<Version>.md` before packaging; `-ReleaseNotes <path>` can override the notes file. `--inspect` runs a quick parser smoke check without opening the UI. If an installer is running during a republish, close or terminate it before retrying.
 
 ## Coding Style & Naming Conventions
 
