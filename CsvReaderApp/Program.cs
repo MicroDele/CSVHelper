@@ -28,8 +28,7 @@ static class Program
 
         if (args.Length >= 2 && args[0] == "--inspect")
         {
-            var text = File.ReadAllText(args[1], new System.Text.UTF8Encoding(false, true));
-            var document = CsvDocument.Parse(text);
+            var document = CsvDocument.LoadAsync(args[1]).GetAwaiter().GetResult();
             var first = document.Rows.Count > 0 && document.Rows[0].Length > 0 ? document.Rows[0][0] : string.Empty;
             var output = $"rows={document.Rows.Count} columns={document.Headers.Length} first={first}";
             if (args.Length >= 3)

@@ -30,6 +30,7 @@ public sealed class MainForm : Form
     private readonly CsvDataGridView grid = new();
     private readonly StatusStrip statusStrip = new();
     private readonly ToolStripStatusLabel statusLabel = new();
+    private readonly ToolStripStatusLabel encodingLabel = new();
     private readonly ToolStripStatusLabel versionLabel = new();
     private readonly ToolTip toolTip = new();
     private readonly ContextMenuStrip gridMenu = new();
@@ -211,8 +212,13 @@ public sealed class MainForm : Form
         statusStrip.Items.Add(statusLabel);
         statusLabel.ForeColor = UiTheme.MutedText;
         statusLabel.Text = "Ready";
+        statusLabel.Spring = true;
+        statusLabel.TextAlign = ContentAlignment.MiddleLeft;
+        statusStrip.Items.Add(encodingLabel);
+        encodingLabel.ForeColor = UiTheme.MutedText;
+        encodingLabel.Margin = new Padding(12, 0, 12, 0);
+        SetEncodingDisplay(null);
         statusStrip.Items.Add(versionLabel);
-        versionLabel.Spring = true;
         versionLabel.TextAlign = ContentAlignment.MiddleRight;
         versionLabel.BorderSides = ToolStripStatusLabelBorderSides.None;
         versionLabel.ForeColor = UiTheme.MutedText;
@@ -782,6 +788,7 @@ public sealed class MainForm : Form
         grid.ResumeLayout();
 
         currentFilePath = null;
+        SetEncodingDisplay(null);
         SetDirty(false);
         UpdateFileNameDisplay();
         Text = "CSVHelper - (clipboard)";
@@ -891,7 +898,8 @@ public sealed class MainForm : Form
         {
             IProgress<(int Value, string Text)> progress = new Progress<(int Value, string Text)>(
                 update => SetLoadProgress(update.Text));
-            var table = await Task.Run(() => CsvDocument.LoadTableAsync(path, progress));
+            var loaded = await Task.Run(() => CsvDocument.LoadTableWithEncodingAsync(path, progress));
+            var table = loaded.Table;
 
             grid.SuspendLayout();
             grid.DataSource = table;
@@ -905,6 +913,7 @@ public sealed class MainForm : Form
             CommitGridInputAndClearSelection();
             grid.ResumeLayout();
             currentFilePath = path;
+            SetEncodingDisplay(loaded.EncodingName);
             SetDirty(false);
             UpdateFileNameDisplay();
             Text = $"CSVHelper - {Path.GetFileName(path)}";
@@ -1007,6 +1016,7 @@ public sealed class MainForm : Form
 
             var document = new CsvDocument(headers, rows);
             File.WriteAllText(path, document.ToCsvText(), new UTF8Encoding(false));
+            SetEncodingDisplay("UTF-8");
             SetDirty(false);
             if (showSavedStatus)
             {
@@ -1552,6 +1562,11 @@ public sealed class MainForm : Form
             .ToList();
         Clipboard.SetText(new CsvDocument(headers, rows).ToCsvText());
         SetStatus($"Copied {selectedRows.Length} row(s) as CSV");
+    }
+
+    private void SetEncodingDisplay(string? encodingName)
+    {
+        encodingLabel.Text = encodingName ?? "—";
     }
 
     private void SetStatus(string text)

@@ -53,9 +53,24 @@ public sealed class CsvDocument
         return new CsvDocument(records[0], records.Skip(1).ToList());
     }
 
+    public static async Task<CsvDocument> LoadAsync(string path, CancellationToken cancellationToken = default) =>
+        (await ReadWithEncodingFallbackAsync(path, async reader => Parse(await reader.ReadToEndAsync(cancellationToken)), cancellationToken)).Value;
+
     public static async Task<DataTable> LoadTableAsync(
         string path,
         IProgress<(int Value, string Text)> progress,
+        CancellationToken cancellationToken = default) =>
+        (await LoadTableWithEncodingAsync(path, progress, cancellationToken)).Table;
+
+    public static Task<(DataTable Table, string EncodingName)> LoadTableWithEncodingAsync(
+        string path,
+        IProgress<(int Value, string Text)> progress,
+        CancellationToken cancellationToken = default) =>
+        ReadWithEncodingFallbackAsync(path, reader => LoadTableAsync(reader, progress, cancellationToken), cancellationToken);
+
+    private static async Task<(T Value, string EncodingName)> ReadWithEncodingFallbackAsync<T>(
+        string path,
+        Func<StreamReader, Task<T>> read,
         CancellationToken cancellationToken = default)
     {
         await using var stream = new FileStream(
@@ -65,7 +80,63 @@ public sealed class CsvDocument
             FileShare.Read,
             bufferSize: 64 * 1024,
             useAsync: true);
-        using var reader = new StreamReader(stream, new UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: true, bufferSize: 64 * 1024);
+        var prefix = new byte[4];
+        var prefixLength = await stream.ReadAtLeastAsync(prefix, prefix.Length, throwOnEndOfStream: false, cancellationToken);
+        var bomEncoding = GetBomEncoding(prefix.AsSpan(0, prefixLength));
+
+        async Task<(T Value, string EncodingName)> ReadAsync(Encoding encoding, int preambleLength)
+        {
+            stream.Position = preambleLength;
+            using var reader = new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: false, bufferSize: 64 * 1024, leaveOpen: true);
+            var value = await read(reader);
+            var encodingName = encoding.CodePage switch
+            {
+                936 => "GBK",
+                65001 => "UTF-8",
+                1200 => "UTF-16 LE",
+                1201 => "UTF-16 BE",
+                12000 => "UTF-32 LE",
+                12001 => "UTF-32 BE",
+                _ => encoding.WebName
+            };
+            return (value, preambleLength > 0 ? $"{encodingName} (BOM)" : encodingName);
+        }
+
+        try
+        {
+            return await ReadAsync(bomEncoding ?? new UTF8Encoding(false, true), bomEncoding?.GetPreamble().Length ?? 0);
+        }
+        catch (DecoderFallbackException) when (bomEncoding is null)
+        {
+            // A BOM-less legacy CSV may use GBK. Restart both decoding and parsing from the beginning.
+            var gbkEncoding = CodePagesEncodingProvider.Instance.GetEncoding(
+                936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)!;
+            return await ReadAsync(gbkEncoding, 0);
+        }
+    }
+
+    private static Encoding? GetBomEncoding(ReadOnlySpan<byte> prefix)
+    {
+        // Check UTF-32 before UTF-16 because their little-endian BOMs share a prefix.
+        if (prefix.StartsWith(new byte[] { 0xff, 0xfe, 0x00, 0x00 }))
+            return new UTF32Encoding(false, true, true);
+        if (prefix.StartsWith(new byte[] { 0x00, 0x00, 0xfe, 0xff }))
+            return new UTF32Encoding(true, true, true);
+        if (prefix.StartsWith(new byte[] { 0xef, 0xbb, 0xbf }))
+            return new UTF8Encoding(true, true);
+        if (prefix.StartsWith(new byte[] { 0xff, 0xfe }))
+            return new UnicodeEncoding(false, true, true);
+        if (prefix.StartsWith(new byte[] { 0xfe, 0xff }))
+            return new UnicodeEncoding(true, true, true);
+        return null;
+    }
+
+    private static async Task<DataTable> LoadTableAsync(
+        StreamReader reader,
+        IProgress<(int Value, string Text)> progress,
+        CancellationToken cancellationToken)
+    {
+        var stream = reader.BaseStream;
 
         var parser = new CsvRecordParser();
         var buffer = new char[64 * 1024];
